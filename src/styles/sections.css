@@ -1,0 +1,575 @@
+/*
+ * Las secciones de la portada y las que se reutilizan en páginas interiores.
+ */
+
+/* --- encabezado de sección ------------------------------------------------ */
+
+.db-section-head {
+  max-width: 42rem;
+}
+
+.db-section-pie {
+  margin: var(--paso-4) 0 0;
+}
+
+/* --- portada -------------------------------------------------------------- */
+
+/*
+ * El encabezado a sangre.
+ *
+ * La imagen del paño va de fondo y el texto encima, con un velo verde que sube
+ * desde abajo. El velo no es estético: sin él el titular blanco cae sobre pasto
+ * claro y deja de leerse. Por eso su opacidad es alta donde está el texto y baja
+ * donde sólo hay terreno.
+ */
+.db-hero {
+  position: relative;
+  isolation: isolate;
+  padding-block: var(--paso-6) var(--paso-4);
+  background: var(--bosque);
+  color: #f2f4ee;
+  margin-bottom: var(--paso-5);
+}
+
+.db-hero-fondo {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  overflow: hidden;
+}
+
+.db-hero-fondo .db-foto {
+  width: 100%;
+  height: 100%;
+}
+
+.db-hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(
+      to top,
+      rgb(14 32 20 / 0.78) 0%,
+      rgb(14 32 20 / 0.52) 42%,
+      rgb(14 32 20 / 0.16) 78%,
+      rgb(14 32 20 / 0.1) 100%
+    ),
+    linear-gradient(to right, rgb(14 32 20 / 0.62) 0%, rgb(14 32 20 / 0.06) 66%);
+}
+
+.db-hero-contenido {
+  max-width: 46rem;
+}
+
+.db-hero-rotulo {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 var(--paso-2);
+  padding: 0.3rem 0.75rem;
+  border: 1px solid rgb(242 244 238 / 0.34);
+  border-radius: 100px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: #e6ebe1;
+}
+
+.db-hero-rotulo a {
+  color: inherit;
+}
+
+.db-hero .db-title-hero {
+  color: #fbfcf8;
+  max-width: 16ch;
+}
+
+.db-hero-bajada {
+  margin: var(--paso-3) 0 0;
+  max-width: 40rem;
+  font-size: clamp(1.03rem, 1.5vw, 1.16rem);
+  line-height: 1.56;
+  color: #dfe6da;
+  text-wrap: pretty;
+}
+
+.db-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--paso-2);
+  margin-top: var(--paso-3);
+}
+
+.db-hero .db-btn-primary {
+  background: var(--bosque-tinta);
+  color: var(--bosque);
+}
+
+.db-hero .db-btn-primary:hover {
+  background: #fff;
+  color: var(--bosque);
+}
+
+/* Sobre una fotografía un botón con borde sólido se ve pegoteado; éste flota. */
+.db-btn-fantasma {
+  background: rgb(255 255 255 / 0.1);
+  color: #f2f4ee;
+  border-color: rgb(242 244 238 / 0.42);
+  backdrop-filter: blur(6px);
+}
+
+.db-btn-fantasma:hover {
+  background: rgb(255 255 255 / 0.2);
+  border-color: rgb(242 244 238 / 0.7);
+  color: #fff;
+}
+
+/* Los datos duros, en fila: es lo que la gente busca antes de leer nada. */
+.db-hero-datos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: var(--paso-4) 0 0;
+}
+
+.db-hero-datos > div {
+  padding: 0.55rem 0.9rem;
+  background: rgb(14 32 20 / 0.55);
+  border: 1px solid rgb(242 244 238 / 0.2);
+  border-radius: var(--radio);
+  backdrop-filter: blur(6px);
+}
+
+.db-hero-datos dt {
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #a9bcae;
+}
+
+.db-hero-datos dd {
+  margin: 0.1rem 0 0;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: #f4f6f0;
+}
+
+.db-hero-datos .db-de-total {
+  color: #a9bcae;
+}
+
+/* La tarjeta del destacado se monta sobre el borde inferior del encabezado. */
+.db-hero-destacado {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--paso-3);
+  margin-top: var(--paso-5);
+  padding: var(--paso-2);
+  background: var(--lienzo);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-grande);
+  color: var(--tinta);
+  text-decoration: none;
+  transition:
+    border-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.db-hero-destacado:hover {
+  border-color: var(--tinta-suave);
+  transform: translateY(-2px);
+  color: var(--tinta);
+}
+
+.db-hero-destacado-vista {
+  display: block;
+  overflow: hidden;
+  border-radius: var(--radio);
+  aspect-ratio: 16 / 10;
+}
+
+.db-hero-destacado-vista .db-foto {
+  width: 100%;
+  height: 100%;
+}
+
+.db-hero-destacado-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.db-hero-destacado-texto .db-eyebrow {
+  margin: 0;
+}
+
+.db-hero-destacado-texto strong {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 1.3rem;
+  line-height: 1.15;
+}
+
+.db-hero-destacado-texto .db-note {
+  margin: 0.15rem 0 0;
+}
+
+.db-hero-destacado-cifra {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+  padding-inline-end: var(--paso-2);
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-align: end;
+}
+
+@media (max-width: 62rem) {
+  .db-hero {
+    padding-block: var(--paso-5) var(--paso-3);
+  }
+
+  .db-hero-destacado {
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    gap: var(--paso-2);
+  }
+
+  .db-hero-destacado-cifra {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--paso-2) 0 0;
+    border-top: 1px solid var(--linea);
+    text-align: start;
+  }
+}
+
+/* --- razones -------------------------------------------------------------- */
+
+.db-razones {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: var(--paso-4) var(--paso-3);
+  margin-top: var(--paso-5);
+}
+
+/*
+ * Sin tarjeta: una regla arriba y espacio. Tres bloques de prosa con borde y
+ * sombra pesan como tres objetos separados, y estas son tres partes de un mismo
+ * argumento.
+ */
+.db-razon {
+  padding-top: var(--paso-2);
+  border-top: 2px solid var(--tinta);
+}
+
+.db-razon-n {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--acento);
+}
+
+.db-razon h3 {
+  margin: var(--paso-2) 0 0.3rem;
+}
+
+.db-razon-bajada {
+  margin: 0 0 var(--paso-2);
+  font-family: var(--serif);
+  font-size: 1.02rem;
+  font-style: italic;
+  color: var(--tinta-suave);
+}
+
+.db-razon p:last-child {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--tinta-media);
+}
+
+/* --- pasos ---------------------------------------------------------------- */
+
+.db-pasos {
+  list-style: none;
+  margin: var(--paso-5) 0 0;
+  padding: 0;
+  max-width: 46rem;
+}
+
+/*
+ * La numeración es legítima acá: los pasos ocurren en orden y no se pueden
+ * intercambiar. Por eso llevan número y línea de continuidad, cosa que las razones
+ * —que no son una secuencia— no llevan.
+ */
+.db-paso {
+  display: grid;
+  grid-template-columns: 3.1rem minmax(0, 1fr);
+  gap: var(--paso-3);
+}
+
+.db-paso-marca {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.db-paso-n {
+  display: grid;
+  place-items: center;
+  width: 3.1rem;
+  height: 3.1rem;
+  flex: none;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: 50%;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--acento);
+  background: var(--lienzo);
+}
+
+.db-paso-linea {
+  flex: 1;
+  width: 1px;
+  background: var(--linea);
+  min-height: 1.5rem;
+}
+
+.db-paso-texto {
+  padding-bottom: var(--paso-4);
+}
+
+.db-paso-cabeza {
+  display: flex;
+  align-items: center;
+  gap: var(--paso-2);
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.db-paso-texto p {
+  margin: 0;
+  color: var(--tinta-media);
+}
+
+/* --- cifras --------------------------------------------------------------- */
+
+.db-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--paso-3);
+  margin-top: var(--paso-5);
+}
+
+.db-stat {
+  padding-top: var(--paso-2);
+  border-top: 1px solid var(--linea);
+}
+
+.db-stat-n {
+  display: block;
+  font-family: var(--serif);
+  font-size: clamp(2.4rem, 5vw, 3.2rem);
+  line-height: 1;
+  color: var(--tinta);
+}
+
+.db-stat-label {
+  margin: var(--paso-1) 0 0;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+/* --- citas ---------------------------------------------------------------- */
+
+.db-citas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: var(--paso-3);
+  margin-top: var(--paso-5);
+}
+
+.db-cita {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: var(--paso-3);
+  background: var(--lienzo);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-grande);
+}
+
+.db-cita blockquote {
+  margin: 0;
+  flex: 1;
+}
+
+.db-cita blockquote p {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.1rem;
+  line-height: 1.5;
+}
+
+.db-cita blockquote p::before {
+  content: '“';
+}
+
+.db-cita blockquote p::after {
+  content: '”';
+}
+
+.db-cita figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin-top: var(--paso-3);
+  padding-top: var(--paso-2);
+  border-top: 1px solid var(--linea);
+}
+
+.db-cita-persona {
+  font-weight: 600;
+  font-size: 0.94rem;
+}
+
+/* --- preguntas ------------------------------------------------------------ */
+
+.db-faq {
+  margin-top: var(--paso-4);
+  max-width: 46rem;
+  border-top: 1px solid var(--linea);
+}
+
+.db-faq-item {
+  border-bottom: 1px solid var(--linea);
+}
+
+.db-faq-item h3 {
+  margin: 0;
+}
+
+.db-faq-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--paso-2);
+  width: 100%;
+  padding: var(--paso-3) 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  line-height: 1.3;
+  color: var(--tinta);
+  text-align: start;
+  cursor: pointer;
+}
+
+.db-faq-btn:hover {
+  color: var(--acento);
+}
+
+.db-chevron {
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: none;
+  color: var(--tinta-suave);
+  transition: transform 0.24s ease;
+}
+
+.db-faq-open .db-chevron {
+  transform: rotate(180deg);
+  color: var(--acento);
+}
+
+.db-faq-answer {
+  padding-bottom: var(--paso-3);
+  max-width: var(--ancho-texto);
+}
+
+.db-faq-answer p {
+  margin: 0;
+  color: var(--tinta-media);
+}
+
+/* --- cierre --------------------------------------------------------------- */
+
+.db-cta {
+  margin-top: var(--paso-6);
+  background: var(--bosque);
+  color: var(--bosque-tinta);
+  padding-block: var(--paso-6);
+}
+
+.db-cta-box {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.db-cta .db-title {
+  max-width: 20ch;
+}
+
+.db-cta .db-lede {
+  color: var(--bosque-suave);
+  margin-inline: auto;
+}
+
+.db-cta .db-hero-actions {
+  justify-content: center;
+  margin-top: var(--paso-4);
+}
+
+.db-cta .db-btn-primary {
+  background: var(--bosque-tinta);
+  color: var(--bosque);
+}
+
+.db-cta .db-btn-primary:hover {
+  background: #fff;
+  color: var(--bosque);
+}
+
+.db-cta .db-btn-secondary {
+  color: var(--bosque-tinta);
+  border-color: color-mix(in srgb, var(--bosque-suave) 45%, transparent);
+}
+
+.db-cta .db-btn-secondary:hover {
+  background: var(--bosque-2);
+  color: var(--bosque-tinta);
+  border-color: var(--bosque-suave);
+}
+
+.db-cta-nota {
+  margin-top: var(--paso-4);
+  color: var(--bosque-suave);
+}
+
+.db-cta-nota a {
+  color: var(--bosque-tinta);
+}
+
+/*
+ * El pie va pegado al cierre cuando la página termina en uno: dos bloques verdes
+ * separados por una franja de papel se leen como un error de maquetación. El cierre
+ * vive dentro de <main> y el pie es hermano de <main>, de ahí el :has().
+ */
+main:has(.db-cta) + .db-pie {
+  margin-top: 0;
+  border-top: 1px solid color-mix(in srgb, var(--bosque-suave) 22%, transparent);
+}

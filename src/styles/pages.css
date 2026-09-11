@@ -1,0 +1,484 @@
+/*
+ * Lo propio de cada página interior: la cabecera común, la ficha de proyecto, el
+ * listado agrupado, la línea de tiempo, las reglas de la cartera y el contacto.
+ */
+
+/* --- cabecera de página --------------------------------------------------- */
+
+.db-page-head {
+  padding-block: var(--paso-5) var(--paso-4);
+}
+
+.db-page-head-extra {
+  margin-top: var(--paso-3);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--paso-2);
+}
+
+.db-page-head-extra .db-note {
+  margin: 0;
+}
+
+/* --- prosa ---------------------------------------------------------------- */
+
+.db-prosa {
+  max-width: var(--ancho-texto);
+}
+
+.db-prosa h2 {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 1.35rem;
+  line-height: 1.2;
+  margin: var(--paso-4) 0 var(--paso-1);
+}
+
+.db-prosa h2:first-child {
+  margin-top: 0;
+}
+
+.db-prosa p {
+  margin: 0 0 var(--paso-2);
+  color: var(--tinta-media);
+}
+
+/* --- listado agrupado ----------------------------------------------------- */
+
+.db-grupo-cabeza {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--paso-2);
+  padding-bottom: var(--paso-1);
+  border-bottom: 2px solid var(--tinta);
+}
+
+.db-grupo-cuenta {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--tinta-suave);
+}
+
+.db-grupo-nota {
+  margin-top: var(--paso-2);
+  max-width: var(--ancho-texto);
+}
+
+.db-grupo .db-proyectos {
+  margin-top: var(--paso-3);
+}
+
+/* --- ficha de proyecto ---------------------------------------------------- */
+
+.db-ficha-rotulos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.db-ficha {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: var(--paso-4);
+  align-items: start;
+}
+
+.db-ficha-plano .db-plano {
+  border: 1px solid var(--linea);
+}
+
+.db-ficha-datos {
+  padding: var(--paso-3);
+  background: var(--lienzo);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-grande);
+}
+
+.db-ficha-tabla {
+  margin: var(--paso-3) 0 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.db-ficha-tabla > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--paso-2);
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--linea);
+}
+
+.db-ficha-tabla > div:last-child {
+  border-bottom: 0;
+}
+
+.db-ficha-tabla dt {
+  font-size: 0.86rem;
+  color: var(--tinta-suave);
+}
+
+.db-ficha-tabla dd {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-align: end;
+}
+
+.db-ficha-cuerpo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 19rem);
+  gap: var(--paso-4);
+  align-items: start;
+  margin-top: var(--paso-4);
+}
+
+.db-atributos {
+  padding: var(--paso-3);
+  background: var(--lienzo);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-grande);
+}
+
+.db-atributos ul {
+  margin: var(--paso-2) 0 var(--paso-2);
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.db-atributos li {
+  position: relative;
+  padding-inline-start: 1.15rem;
+  font-size: 0.93rem;
+  color: var(--tinta-media);
+}
+
+.db-atributos li::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0.58em;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 1px;
+  background: var(--acento);
+}
+
+@media (max-width: 62rem) {
+  .db-ficha,
+  .db-ficha-cuerpo {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- portada de la ficha --------------------------------------------------- */
+
+.db-ficha-portada {
+  position: relative;
+  isolation: isolate;
+  padding-block: var(--paso-6) var(--paso-5);
+  background: var(--bosque);
+  color: #f2f4ee;
+}
+
+.db-ficha-portada-fondo {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  overflow: hidden;
+}
+
+.db-ficha-portada-fondo .db-foto {
+  width: 100%;
+  height: 100%;
+}
+
+.db-ficha-portada::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(
+      to top,
+      rgb(14 32 20 / 0.8) 0%,
+      rgb(14 32 20 / 0.5) 45%,
+      rgb(14 32 20 / 0.14) 80%,
+      rgb(14 32 20 / 0.08) 100%
+    ),
+    linear-gradient(to right, rgb(14 32 20 / 0.6) 0%, rgb(14 32 20 / 0.04) 64%);
+}
+
+.db-ficha-portada-texto {
+  max-width: 46rem;
+}
+
+.db-ficha-portada .db-title-hero {
+  color: #fbfcf8;
+  max-width: 14ch;
+}
+
+.db-ficha-portada .db-ficha-rotulos {
+  margin-top: var(--paso-3);
+}
+
+.db-ficha-portada .db-badge-neutral {
+  background: rgb(242 244 238 / 0.16);
+  color: #e8ece2;
+}
+
+/* --- galería de vistas ---------------------------------------------------- */
+
+/*
+ * Las fotos del paño y, cerrando, el plano de loteo.
+ *
+ * La grilla se reparte sola con `auto-fit` porque no todos los proyectos tienen la
+ * misma cantidad de fotos: el edificio entregado tiene una y los loteos dos. Con
+ * tramos fijos, el que tuviera menos dejaba una columna vacía.
+ */
+.db-galeria {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: var(--paso-3);
+  margin-top: var(--paso-4);
+}
+
+.db-toma {
+  position: relative;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-grande);
+  background: var(--foto-fondo);
+}
+
+.db-toma-plano {
+  background: var(--plano-fondo);
+}
+
+.db-toma figcaption {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  padding: var(--paso-4) var(--paso-2) var(--paso-2);
+  background: linear-gradient(to top, rgb(14 32 20 / 0.86), rgb(14 32 20 / 0));
+  color: #f1f4ec;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+/* --- créditos fotográficos ------------------------------------------------ */
+
+.db-creditos {
+  list-style: none;
+  margin: var(--paso-4) 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr));
+  gap: var(--paso-3);
+}
+
+.db-credito {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  gap: var(--paso-2);
+  align-items: start;
+}
+
+.db-credito-mini {
+  border-radius: var(--radio);
+  border: 1px solid var(--linea);
+}
+
+.db-credito-titulo {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+.db-credito .db-note {
+  margin-top: 0.25rem;
+}
+
+/* --- reglas de la cartera ------------------------------------------------- */
+
+.db-reglas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--paso-3);
+  margin-top: var(--paso-5);
+}
+
+.db-regla {
+  padding: var(--paso-3);
+  background: var(--lienzo);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-grande);
+}
+
+/* El día es el dato que se busca en esta sección, así que va primero y con el
+   acento: «¿hasta cuándo puedo pagar sin recargo?». */
+.db-regla-dato {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  background: var(--acento-suave);
+  color: var(--acento);
+  border-radius: var(--radio);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.db-regla h3 {
+  margin: var(--paso-2) 0 0.4rem;
+}
+
+.db-regla p {
+  margin: 0;
+  font-size: 0.94rem;
+  color: var(--tinta-media);
+}
+
+.db-aviso {
+  margin: var(--paso-4) 0 0;
+  padding: var(--paso-3);
+  background: var(--aviso-fondo);
+  color: var(--tinta);
+  border-inline-start: 3px solid var(--aviso);
+  border-radius: 0 var(--radio) var(--radio) 0;
+  max-width: 46rem;
+  font-size: 0.95rem;
+}
+
+/* --- línea de tiempo ------------------------------------------------------ */
+
+.db-linea {
+  list-style: none;
+  margin: var(--paso-5) 0 0;
+  padding: 0;
+  max-width: 46rem;
+}
+
+.db-hito {
+  display: grid;
+  grid-template-columns: 4.4rem minmax(0, 1fr);
+  gap: var(--paso-3);
+}
+
+.db-hito-marca {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.db-hito-ano {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--acento);
+}
+
+.db-hito-linea {
+  flex: 1;
+  width: 1px;
+  background: var(--linea);
+  min-height: 1.5rem;
+}
+
+.db-hito-texto {
+  padding-bottom: var(--paso-4);
+}
+
+.db-hito-texto p {
+  margin: 0.4rem 0 0;
+  color: var(--tinta-media);
+}
+
+/* --- oficina -------------------------------------------------------------- */
+
+.db-oficina {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--paso-4);
+  margin-top: var(--paso-4);
+  padding: var(--paso-3);
+  background: var(--lienzo);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-grande);
+}
+
+.db-oficina address {
+  margin: var(--paso-2) 0 0;
+  font-style: normal;
+  color: var(--tinta-media);
+}
+
+.db-oficina-datos {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.db-oficina-datos dt {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
+}
+
+.db-oficina-datos dd {
+  margin: 0.15rem 0 0;
+  font-size: 0.98rem;
+}
+
+/* --- contacto ------------------------------------------------------------- */
+
+.db-contacto {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: var(--paso-5);
+  align-items: start;
+}
+
+.db-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--paso-3);
+  align-items: stretch;
+}
+
+.db-form .db-btn {
+  align-self: flex-start;
+}
+
+.db-contacto-lado {
+  padding: var(--paso-3);
+  background: var(--lienzo);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-grande);
+}
+
+.db-exito {
+  padding: var(--paso-4);
+  background: var(--ok-fondo);
+  border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent);
+  border-radius: var(--radio-grande);
+}
+
+.db-exito p {
+  margin: var(--paso-2) 0 0;
+}
+
+@media (max-width: 62rem) {
+  .db-contacto {
+    grid-template-columns: 1fr;
+    gap: var(--paso-4);
+  }
+}
