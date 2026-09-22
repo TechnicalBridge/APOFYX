@@ -403,7 +403,7 @@ from .reenvio import (  # noqa: E402
 DATABRIDGE_PRUEBA = {
     "URL": "http://databridge.prueba", "CLAVE": "tbk_prueba",
     "RUT_AGENCIA": "77305118-6", "MORA_MAXIMA_DIAS": 120, "TIMEOUT_S": 2,
-    "REENVIO_INMEDIATO": False,
+    "REENVIO_INMEDIATO": False, "SECRETO_EVENTOS": "",
 }
 
 
@@ -505,7 +505,8 @@ class LaBandejaDeSalida(TestCase):
         campana_de(self.acreedor)
         recibir_cartera(self.acreedor, cartera_de_ejemplo())
 
-        forward = despachar(Forward.objects.get().pk, ClienteFalso(caido=True))
+        with self.assertLogs("integracion.reenvio", "WARNING"):
+            forward = despachar(Forward.objects.get().pk, ClienteFalso(caido=True))
 
         self.assertEqual(forward.status, Forward.Status.PENDING)
         self.assertEqual(forward.attempts, 1)
@@ -516,8 +517,9 @@ class LaBandejaDeSalida(TestCase):
         campana_de(self.acreedor)
         recibir_cartera(self.acreedor, cartera_de_ejemplo())
         pk = Forward.objects.get().pk
-        for _ in range(len(Forward.ESPERAS)):
-            despachar(pk, ClienteFalso(caido=True))
+        with self.assertLogs("integracion.reenvio", "WARNING"):
+            for _ in range(len(Forward.ESPERAS)):
+                despachar(pk, ClienteFalso(caido=True))
         self.assertEqual(Forward.objects.get(pk=pk).status, Forward.Status.FAILED)
 
     def test_sin_campana_no_se_adivina_espera(self):
@@ -543,7 +545,7 @@ class LaBandejaDeSalida(TestCase):
         no conteste: el problema no es suyo.
         """
         campana_de(self.acreedor)
-        with self.captureOnCommitCallbacks(execute=True):
+        with self.assertLogs("integracion.reenvio", "WARNING"),                 self.captureOnCommitCallbacks(execute=True):
             respuesta = recibir_cartera(self.acreedor, cartera_de_ejemplo())
 
         self.assertEqual(respuesta["aceptadas"], 3)
@@ -560,3 +562,276 @@ class ElVocabularioSeTraduceEnElBorde(TestCase):
 
     def test_el_check_de_la_bandeja_calza_con_el_modelo(self):
         self.assertEqual(valores_del_check("ck_forward_status"), set(Forward.Status.values))
+
+
+@override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+class LaCampanaSeAsignaDesdeElAdmin(TestCase):
+    """Cuando el reenvio queda esperando campana, alguien la asigna a mano."""
+
+    def test_solo_ofrece_campanas_del_mismo_acreedor(self):
+        from django.contrib.auth import get_user_model
+
+        acreedor = crear_acreedor()
+        otro = crear_acreedor("77812341-K", "Otro Acreedor")
+        propia = campana_de(acreedor)
+        Campaign.objects.create(creditor=otro, name="Campana ajena", starts_on=_date(2026, 9, 1),
+                                status=Campaign.Status.RUNNING, channels=["email"])
+        recibir_cartera(acreedor, cartera_de_ejemplo())
+        entrega = Batch.objects.get()
+
+        self.client.force_login(get_user_model().objects.create_superuser(
+            "supervisora", "supervisora@apofyx.cl", "clave-de-prueba"))
+        pagina = self.client.get(reverse("admin:cartera_batch_change", args=[entrega.pk]))
+
+        ofrecidas = pagina.context["adminform"].form.fields["campaign"].queryset
+        self.assertEqual(list(ofrecidas), [propia])
+
+
+# ==========================================================================
+#  Los eventos de vuelta: DataBridge -> APOFYX -> el cliente
+# ==========================================================================
+
+import threading  # noqa: E402
+import time as _time  # noqa: E402
+from http.server import BaseHTTPRequestHandler, HTTPServer  # noqa: E402
+
+from .eventos import despachar_evento, firma_valida, firmar, recibir_evento  # noqa: E402
+from .models import InboundEvent, OutboundEvent, Subscription  # noqa: E402
+
+SECRETO_DATABRIDGE = "whsec_de_databridge"
+CON_EVENTOS = {**DATABRIDGE_PRUEBA, "SECRETO_EVENTOS": SECRETO_DATABRIDGE}
+
+
+def evento_de_databridge(tipo, deuda="CTR-2025-014", **datos):
+    """Un evento como lo arma ms-debt, con el lote de APOFYX."""
+    return {
+        "id": f"evt_{tipo}_{deuda}_{len(datos)}",
+        "tipo": tipo,
+        "version": "1",
+        "ocurrido_en": "2026-09-20T14:03:11-03:00",
+        "acreedor_rut": RUT_PATRIMONIO,
+        "lote_id_externo": "APX-2026-09-18-0001",
+        "datos": {"deuda_id_externo": deuda, **datos},
+    }
+
+
+PAGO = {"pago_id": "41", "monto": 520000, "moneda": "CLP", "monto_clp": 520000,
+        "medio": "webpay", "pagado_en": "2026-09-20T14:03:11-03:00"}
+
+
+class LaFirmaDelContrato(TestCase):
+
+    def test_firma_igual_que_node_y_que_java(self):
+        """
+        La misma referencia que usa la prueba de ms-debt: los tres sistemas
+        tienen que firmar byte a byte igual, o todo evento llega rechazado.
+        """
+        cuerpo = b'{"id":"evt_1","tipo":"pago.confirmado"}'
+        self.assertEqual(
+            firmar("whsec_prueba", 1789923791, cuerpo),
+            "v1=344ce2850a1c9cb0b60434906199eb2d716de503c6191265746204fcaa31d3f6",
+        )
+
+    def test_rechaza_un_cuerpo_alterado(self):
+        marca = int(_time.time())
+        firma = firmar("s", marca, b'{"monto": 1000}')
+        self.assertTrue(firma_valida("s", str(marca), firma, b'{"monto": 1000}'))
+        self.assertFalse(firma_valida("s", str(marca), firma, b'{"monto": 9000}'))
+
+    def test_rechaza_otro_secreto(self):
+        marca = int(_time.time())
+        self.assertFalse(firma_valida("s", marca, firmar("otro", marca, b"{}"), b"{}"))
+
+    def test_rechaza_un_evento_de_hace_mas_de_cinco_minutos(self):
+        """Un evento interceptado no se puede volver a mandar mas tarde."""
+        vieja = int(_time.time()) - 6 * 60
+        self.assertFalse(firma_valida("s", vieja, firmar("s", vieja, b"{}"), b"{}"))
+
+
+@override_settings(DATABRIDGE=CON_EVENTOS)
+class LosEventosPonenAlDiaLaCartera(TestCase):
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        recibir_cartera(self.acreedor, lote_de_agosto())
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+    def deuda(self, id_externo="CTR-2025-014"):
+        return Debt.objects.get(external_id=id_externo)
+
+    def test_un_pago_se_anota_pero_no_cambia_el_estado(self):
+        """El saldo vive en DataBridge; APOFYX solo cambia de estado al saldarse."""
+        respuesta = recibir_evento(evento_de_databridge("pago.confirmado", **PAGO))
+        self.assertEqual(respuesta["resultado"], "pago anotado")
+        self.assertEqual(self.deuda().status, Debt.Status.OPEN)
+        self.assertEqual(InboundEvent.objects.get().debt, self.deuda())
+
+    def test_la_deuda_saldada_deja_de_estar_en_gestion(self):
+        recibir_evento(evento_de_databridge("deuda.saldada", saldada_en="2026-09-20T14:03:11-03:00"))
+        self.assertEqual(self.deuda().status, Debt.Status.PAID)
+
+    def test_una_repactacion_pasa_a_convenio(self):
+        recibir_evento(evento_de_databridge("repactacion.aceptada", cuotas=6,
+                                            monto_cuota=173334, moneda="CLP",
+                                            primera_cuota="2026-10-20"))
+        self.assertEqual(self.deuda().status, Debt.Status.REPACTED)
+
+    def test_el_convenio_sobrevive_a_la_cartera_del_mes_siguiente(self):
+        """
+        Patrimonio vuelve a mandar la deuda en su cartera mensual. Eso no es una
+        decision sobre el deudor: el convenio sigue.
+        """
+        recibir_evento(evento_de_databridge("repactacion.aceptada", cuotas=6))
+        otra = cartera_de_ejemplo()
+        otra["lote"]["id_externo"] = "PAT-2026-10-18-01"
+        otra["deudas"] = [otra["deudas"][0]]
+
+        respuesta = recibir_cartera(self.acreedor, otra)
+
+        self.assertEqual(respuesta["resultados"][0]["resultado"], "sin_cambios")
+        self.assertEqual(self.deuda().status, Debt.Status.REPACTED)
+
+    def test_un_aviso_atrasado_no_reabre_una_deuda_pagada(self):
+        """Los eventos no llegan en orden garantizado (contrato 8.1)."""
+        recibir_evento(evento_de_databridge("deuda.saldada"))
+        respuesta = recibir_evento(evento_de_databridge("repactacion.aceptada", cuotas=3))
+        self.assertEqual(respuesta["resultado"], "se mantiene pagada")
+        self.assertEqual(self.deuda().status, Debt.Status.PAID)
+
+    def test_el_mismo_evento_dos_veces_se_procesa_una(self):
+        evento = evento_de_databridge("deuda.saldada")
+        recibir_evento(evento)
+        segunda = recibir_evento(evento)
+        self.assertTrue(segunda["repetido"])
+        self.assertEqual(InboundEvent.objects.count(), 1)
+
+    def test_una_deuda_que_apofyx_no_conoce_se_guarda_y_no_se_reenvia(self):
+        Subscription.registrar(self.acreedor, "http://patrimonio.prueba/api/eventos")
+        respuesta = recibir_evento(evento_de_databridge("pago.confirmado", deuda="CTR-9999", **PAGO))
+        self.assertEqual(respuesta["resultado"], "deuda desconocida")
+        self.assertEqual(respuesta["avisados"], 0)
+        self.assertEqual(InboundEvent.objects.count(), 1)
+
+
+@override_settings(DATABRIDGE=CON_EVENTOS)
+class APOFYXLeReportaAlCliente(TestCase):
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+    def test_sin_suscripcion_el_cliente_no_recibe_nada(self):
+        respuesta = recibir_evento(evento_de_databridge("pago.confirmado", **PAGO))
+        self.assertEqual(respuesta["avisados"], 0)
+        self.assertEqual(OutboundEvent.objects.count(), 0)
+
+    def test_el_evento_que_sale_lleva_el_lote_del_cliente_y_un_id_propio(self):
+        Subscription.registrar(self.acreedor, "http://patrimonio.prueba/api/eventos")
+        original = evento_de_databridge("pago.confirmado", **PAGO)
+
+        recibir_evento(original)
+
+        saliente = OutboundEvent.objects.get().payload
+        self.assertEqual(saliente["lote_id_externo"], "PAT-2026-09-18-01")
+        self.assertNotEqual(saliente["id"], original["id"])
+        self.assertEqual(saliente["datos"], original["datos"])
+        self.assertEqual(saliente["acreedor_rut"], RUT_PATRIMONIO)
+
+    def test_el_cliente_elige_que_eventos_recibe(self):
+        Subscription.registrar(self.acreedor, "http://patrimonio.prueba/api/eventos",
+                               ["deuda.saldada"])
+        recibir_evento(evento_de_databridge("pago.confirmado", **PAGO))
+        recibir_evento(evento_de_databridge("deuda.saldada"))
+        self.assertEqual(list(OutboundEvent.objects.values_list("type", flat=True)), ["deuda.saldada"])
+
+    def test_registrar_la_misma_url_devuelve_el_mismo_secreto(self):
+        primera = Subscription.registrar(self.acreedor, "http://patrimonio.prueba/api/eventos")
+        segunda = Subscription.registrar(self.acreedor, "http://patrimonio.prueba/api/eventos")
+        self.assertEqual(primera.secret, segunda.secret)
+        self.assertEqual(Subscription.objects.count(), 1)
+
+    def test_el_aviso_llega_firmado_y_el_cliente_puede_verificarlo(self):
+        """Un servidor de verdad hace de Patrimonio y verifica la firma."""
+        recibido = {}
+
+        class Patrimonio(BaseHTTPRequestHandler):
+            def do_POST(self):
+                cuerpo = self.rfile.read(int(self.headers["Content-Length"]))
+                recibido.update(cuerpo=cuerpo, marca=self.headers["X-Timestamp"],
+                                firma=self.headers["X-Firma"], tipo=self.headers["X-Evento"])
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"repetido": false}')
+
+            def log_message(self, *args):
+                pass
+
+        servidor = HTTPServer(("127.0.0.1", 0), Patrimonio)
+        hilo = threading.Thread(target=servidor.handle_request, daemon=True)
+        hilo.start()
+        try:
+            suscripcion = Subscription.registrar(
+                self.acreedor, f"http://127.0.0.1:{servidor.server_port}/api/eventos")
+            recibir_evento(evento_de_databridge("pago.confirmado", **PAGO))
+
+            pendiente = despachar_evento(OutboundEvent.objects.get().pk)
+        finally:
+            hilo.join(timeout=5)
+            servidor.server_close()
+
+        self.assertEqual(pendiente.status, OutboundEvent.Status.DELIVERED)
+        self.assertEqual(recibido["tipo"], "pago.confirmado")
+        self.assertTrue(firma_valida(suscripcion.secret, recibido["marca"],
+                                     recibido["firma"], recibido["cuerpo"]))
+
+    def test_si_el_cliente_esta_caido_el_aviso_espera(self):
+        Subscription.registrar(self.acreedor, "http://127.0.0.1:9/api/eventos")
+        recibir_evento(evento_de_databridge("pago.confirmado", **PAGO))
+
+        with self.assertLogs("integracion.eventos", "WARNING"):
+            pendiente = despachar_evento(OutboundEvent.objects.get().pk)
+
+        self.assertEqual(pendiente.status, OutboundEvent.Status.PENDING)
+        self.assertEqual(pendiente.attempts, 1)
+
+
+class ElEndpointDeEventos(TestCase):
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        self.url = reverse("integracion:eventos")
+
+    def enviar(self, evento, secreto=SECRETO_DATABRIDGE, marca=None):
+        cuerpo = json.dumps(evento).encode("utf-8")
+        marca = int(_time.time()) if marca is None else marca
+        return self.client.post(self.url, data=cuerpo, content_type="application/json",
+                                HTTP_X_TIMESTAMP=str(marca),
+                                HTTP_X_FIRMA=firmar(secreto, marca, cuerpo))
+
+    @override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+    def test_sin_secreto_configurado_no_recibe(self):
+        respuesta = self.enviar(evento_de_databridge("deuda.saldada"))
+        self.assertEqual(respuesta.status_code, 503)
+
+    @override_settings(DATABRIDGE=CON_EVENTOS)
+    def test_con_otra_firma_responde_401_y_no_toca_nada(self):
+        respuesta = self.enviar(evento_de_databridge("deuda.saldada"), secreto="whsec_falso")
+        self.assertEqual(respuesta.status_code, 401)
+        self.assertEqual(Debt.objects.get(external_id="CTR-2025-014").status, Debt.Status.OPEN)
+
+    @override_settings(DATABRIDGE=CON_EVENTOS)
+    def test_un_evento_viejo_se_rechaza_aunque_la_firma_calce(self):
+        vieja = int(_time.time()) - 600
+        self.assertEqual(self.enviar(evento_de_databridge("deuda.saldada"), marca=vieja).status_code, 401)
+
+    @override_settings(DATABRIDGE=CON_EVENTOS)
+    def test_bien_firmado_pone_al_dia_la_deuda(self):
+        respuesta = self.enviar(evento_de_databridge("deuda.saldada"))
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta.json()["resultado"], "en gestion -> pagada")
+        self.assertEqual(Debt.objects.get(external_id="CTR-2025-014").status, Debt.Status.PAID)
+
+    def test_el_check_de_la_bandeja_de_avisos_calza_con_el_modelo(self):
+        self.assertEqual(valores_del_check("ck_outboundevent_status"),
+                         set(OutboundEvent.Status.values))

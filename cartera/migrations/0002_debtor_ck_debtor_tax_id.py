@@ -2,6 +2,8 @@
 
 from django.db import migrations, models
 
+from crm.operaciones import SiFalta
+
 
 class Migration(migrations.Migration):
 
@@ -10,8 +12,8 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddConstraint(
+        SiFalta(migrations.AddConstraint(
             model_name='debtor',
             constraint=models.CheckConstraint(condition=models.Q(('tax_id__regex', '^[0-9]{7,8}-[0-9K]$')), name='ck_debtor_tax_id'),
-        ),
+        )),
     ]

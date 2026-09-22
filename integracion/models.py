@@ -91,6 +91,25 @@ class ApiKey(models.Model):
         return registro
 
 
+# 1 min, 5, 30, 2 h, 6 h y 24 h. Despues queda para reenvio a mano. Son las
+# mismas del contrato (seccion 8.1) y las mismas que usa DataBridge.
+ESPERAS = [
+    timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=30),
+    timedelta(hours=2), timedelta(hours=6), timedelta(hours=24),
+]
+
+
+def _reintentar(fila, motivo):
+    """Programa el proximo intento de una bandeja, o se rinde despues del ultimo."""
+    fila.attempts += 1
+    fila.last_error = (motivo or "")[:300]
+    if fila.attempts >= len(ESPERAS):
+        fila.status = fila.Status.FAILED
+        return
+    fila.status = fila.Status.PENDING
+    fila.next_attempt_at = timezone.now() + ESPERAS[fila.attempts - 1]
+
+
 class Forward(models.Model):
     """
     Una cartera por pasarle a DataBridge: la bandeja de salida.
@@ -113,11 +132,7 @@ class Forward(models.Model):
         SENT = "sent", "Entregada"
         FAILED = "failed", "Fallida"
 
-    # 1 min, 5, 30, 2 h, 6 h y 24 h. Despues queda para reenvio a mano.
-    ESPERAS = [
-        timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=30),
-        timedelta(hours=2), timedelta(hours=6), timedelta(hours=24),
-    ]
+    ESPERAS = ESPERAS
 
     batch = models.OneToOneField(
         "cartera.Batch", on_delete=models.CASCADE, related_name="forward",
@@ -159,11 +174,155 @@ class Forward(models.Model):
         self.last_error = None
 
     def fallo(self, motivo):
-        """Programa el proximo intento, o se rinde despues del ultimo."""
-        self.attempts += 1
-        self.last_error = (motivo or "")[:300]
-        if self.attempts >= len(self.ESPERAS):
-            self.status = self.Status.FAILED
-            return
-        self.status = self.Status.PENDING
-        self.next_attempt_at = timezone.now() + self.ESPERAS[self.attempts - 1]
+        _reintentar(self, motivo)
+
+
+# ==========================================================================
+#  Eventos de vuelta: DataBridge -> APOFYX -> el cliente
+# ==========================================================================
+
+class Subscription(models.Model):
+    """
+    A donde APOFYX le avisa a un cliente lo que pasa con su cartera.
+
+    El cliente da una URL y APOFYX le entrega un secreto. Con ese secreto se
+    firma cada aviso, y el cliente descarta lo que no calce. Es el mismo
+    contrato con que DataBridge le avisa a APOFYX, un tramo mas arriba.
+
+    El secreto se guarda en claro porque hay que FIRMAR con el, no
+    compararlo: una huella no sirve para firmar. Por eso no se muestra en el
+    admin despues de emitirlo.
+    """
+
+    creditor = models.ForeignKey(
+        "crm.Creditor", on_delete=models.CASCADE, related_name="subscriptions",
+        verbose_name="acreedor", db_column="creditor_id",
+    )
+    url = models.CharField("URL", max_length=300)
+    secret = models.CharField("secreto", max_length=120)
+    events = models.JSONField("eventos", default=list, blank=True, help_text="Vacio = todos.")
+    active = models.BooleanField("activa", default=True)
+    created_at = models.DateTimeField("creada", auto_now_add=True)
+
+    class Meta:
+        db_table = "integracion_subscription"
+        verbose_name = "suscripcion de un cliente"
+        verbose_name_plural = "suscripciones de clientes"
+        constraints = [
+            models.UniqueConstraint(fields=["creditor", "url"], name="uq_subscription_url"),
+        ]
+
+    def __str__(self):
+        return f"{self.creditor} -> {self.url}"
+
+    @classmethod
+    def registrar(cls, creditor, url, eventos=None):
+        """
+        Crea la suscripcion o reactiva la existente. Registrar la misma URL otra
+        vez devuelve el mismo secreto: no invalida lo que el cliente ya tiene.
+        """
+        suscripcion, _ = cls.objects.get_or_create(
+            creditor=creditor, url=url,
+            defaults={"secret": "whsec_" + secrets.token_urlsafe(32)},
+        )
+        suscripcion.events = list(eventos or [])
+        suscripcion.active = True
+        suscripcion.save(update_fields=["events", "active"])
+        return suscripcion
+
+    def quiere(self, tipo):
+        return not self.events or tipo in self.events
+
+
+class InboundEvent(models.Model):
+    """
+    Un evento que llego de DataBridge.
+
+    Se guarda siempre, lo entienda APOFYX o no: es el rastro de por que una
+    deuda cambio de estado. El id del evento deduplica, porque la entrega es
+    "al menos una vez" y el mismo aviso puede llegar dos veces.
+    """
+
+    event_id = models.CharField("id del evento", max_length=64, unique=True)
+    type = models.CharField("tipo", max_length=30)
+    occurred_at = models.DateTimeField("ocurrido", blank=True, null=True)
+    debt = models.ForeignKey(
+        "cartera.Debt", on_delete=models.SET_NULL, related_name="events",
+        verbose_name="deuda", db_column="debt_id", blank=True, null=True,
+    )
+    payload = models.JSONField("evento recibido")
+    result = models.CharField("resultado", max_length=80)
+    received_at = models.DateTimeField("recibido", auto_now_add=True)
+
+    class Meta:
+        db_table = "integracion_inboundevent"
+        verbose_name = "evento recibido"
+        verbose_name_plural = "eventos recibidos"
+        ordering = ["-received_at"]
+
+    def __str__(self):
+        return f"{self.type} {self.event_id}"
+
+
+class OutboundEvent(models.Model):
+    """
+    Un evento por avisarle a un cliente: la segunda bandeja de salida.
+
+    Nace de un evento recibido, con id propio y el lote del cliente en vez del
+    de APOFYX. Se escribe en la misma transaccion que recibe, asi que si el
+    cliente esta caido el evento igual queda y sale cuando responda.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Por enviar"
+        DELIVERED = "delivered", "Entregado"
+        FAILED = "failed", "Fallido"
+
+    ESPERAS = ESPERAS
+
+    event_id = models.CharField("id del evento", max_length=64)
+    subscription = models.ForeignKey(
+        Subscription, on_delete=models.CASCADE, related_name="deliveries",
+        verbose_name="suscripcion", db_column="subscription_id",
+    )
+    origin = models.ForeignKey(
+        InboundEvent, on_delete=models.SET_NULL, related_name="forwards",
+        verbose_name="evento de origen", db_column="origin_id", blank=True, null=True,
+    )
+    type = models.CharField("tipo", max_length=30)
+    payload = models.JSONField("evento")
+    status = models.CharField(
+        "estado", max_length=10, choices=Status.choices, default=Status.PENDING
+    )
+    attempts = models.PositiveSmallIntegerField("intentos", default=0)
+    next_attempt_at = models.DateTimeField("proximo intento", default=timezone.now)
+    delivered_at = models.DateTimeField("entregado", blank=True, null=True)
+    last_error = models.CharField("ultimo error", max_length=300, blank=True, null=True)
+    created_at = models.DateTimeField("creado", auto_now_add=True)
+
+    class Meta:
+        db_table = "integracion_outboundevent"
+        verbose_name = "evento por avisar"
+        verbose_name_plural = "eventos por avisar"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["event_id", "subscription"], name="uq_outboundevent"),
+            models.CheckConstraint(
+                condition=models.Q(status__in=["pending", "delivered", "failed"]),
+                name="ck_outboundevent_status",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["status", "next_attempt_at"], name="ix_outboundevent_por_enviar"),
+        ]
+
+    def __str__(self):
+        return f"{self.type} {self.event_id} ({self.get_status_display()})"
+
+    def entregado(self):
+        self.status = self.Status.DELIVERED
+        self.delivered_at = timezone.now()
+        self.last_error = None
+
+    def fallo(self, motivo):
+        _reintentar(self, motivo)

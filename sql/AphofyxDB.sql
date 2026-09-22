@@ -19,7 +19,7 @@
 --  abajo y volver a ejecutar el archivo completo.
 --
 --  CONTENIDO
---      PARTE 1 — DDL   base de datos, 18 tablas, restricciones, indices, vistas
+--      PARTE 1 — DDL   base de datos, 21 tablas, restricciones, indices, vistas
 --      PARTE 2 — DML   datos de referencia (rubros)
 --      PARTE 3 — DML   datos de demostracion (5 clientes y sus campanas)
 --      PARTE 4 — DML   catalogo del asistente (intenciones, patrones, respuestas)
@@ -84,6 +84,9 @@ USE apofyx;
 --  Reinicio para desarrollo — DESCOMENTAR SOLO SI QUIERES BORRAR TODO
 --  El orden es inverso al de creacion para respetar las claves foraneas.
 -- -----------------------------------------------------------------------------
+-- DROP TABLE IF EXISTS integracion_outboundevent;
+-- DROP TABLE IF EXISTS integracion_inboundevent;
+-- DROP TABLE IF EXISTS integracion_subscription;
 -- DROP TABLE IF EXISTS integracion_forward;
 -- DROP TABLE IF EXISTS integracion_apikey;
 -- DROP TABLE IF EXISTS cartera_debtcharge;
@@ -685,7 +688,7 @@ CREATE TABLE cartera_debt (
 
     CONSTRAINT ck_debt_currency CHECK (currency IN ('CLP', 'UF')),
     CONSTRAINT ck_debt_status CHECK (
-        status IN ('open', 'paid', 'withdrawn', 'disputed')
+        status IN ('open', 'repacted', 'paid', 'withdrawn', 'disputed')
     ),
 
     INDEX ix_debt_creditor_status (creditor_id, status),
@@ -798,6 +801,96 @@ CREATE TABLE integracion_forward (
 
     --  Por aca entra el despachador: lo pendiente que ya toca reintentar.
     INDEX ix_forward_por_enviar (status, next_attempt_at)
+) ENGINE=InnoDB;
+
+-- -----------------------------------------------------------------------------
+--  integracion_subscription — a donde avisarle a un cliente lo que pasa con su
+--  cartera (contrato 3, eventos de vuelta).
+--
+--  secret : con el se FIRMA cada aviso, y por eso se guarda en claro: una
+--           huella sirve para comparar, no para firmar. En produccion va
+--           cifrado con una llave fuera de la base.
+--  events : los tipos que el cliente quiere recibir. Vacio = todos.
+-- -----------------------------------------------------------------------------
+CREATE TABLE integracion_subscription (
+    id           BIGINT        NOT NULL AUTO_INCREMENT,
+    creditor_id  BIGINT        NOT NULL,
+    url          VARCHAR(300)  NOT NULL,
+    secret       VARCHAR(120)  NOT NULL,
+    events       JSON          NOT NULL,
+    active       BOOL          NOT NULL DEFAULT TRUE,
+    created_at   DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+
+    CONSTRAINT pk_subscription     PRIMARY KEY (id),
+    CONSTRAINT uq_subscription_url UNIQUE (creditor_id, url),
+
+    CONSTRAINT fk_subscription_creditor FOREIGN KEY (creditor_id)
+        REFERENCES crm_creditor (id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- -----------------------------------------------------------------------------
+--  integracion_inboundevent — los eventos que llegan de DataBridge.
+--
+--  Se guardan todos, se entiendan o no: son el rastro de por que una deuda
+--  cambio de estado. event_id deduplica, porque la entrega es "al menos una
+--  vez" y el mismo aviso puede llegar dos veces.
+--  NO hay aqui montos ni datos del deudor en columnas: el pago es de
+--  DataBridge. payload guarda el evento tal como llego, y el evento, por
+--  contrato, no trae datos personales.
+-- -----------------------------------------------------------------------------
+CREATE TABLE integracion_inboundevent (
+    id           BIGINT       NOT NULL AUTO_INCREMENT,
+    event_id     VARCHAR(64)  NOT NULL,
+    type         VARCHAR(30)  NOT NULL,
+    occurred_at  DATETIME(6)      NULL,
+    debt_id      BIGINT           NULL,
+    payload      JSON         NOT NULL,
+    result       VARCHAR(80)  NOT NULL,
+    received_at  DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+
+    CONSTRAINT pk_inboundevent       PRIMARY KEY (id),
+    CONSTRAINT uq_inboundevent_event UNIQUE (event_id),
+
+    CONSTRAINT fk_inboundevent_debt FOREIGN KEY (debt_id)
+        REFERENCES cartera_debt (id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- -----------------------------------------------------------------------------
+--  integracion_outboundevent — la segunda bandeja de salida: los avisos al
+--  cliente.
+--
+--  Cada evento que llega de DataBridge produce uno nuevo por suscripcion, con
+--  id propio y el lote del cliente en vez del de APOFYX. Se escribe en la
+--  misma transaccion que recibe: si el cliente esta caido, el aviso espera.
+-- -----------------------------------------------------------------------------
+CREATE TABLE integracion_outboundevent (
+    id               BIGINT            NOT NULL AUTO_INCREMENT,
+    event_id         VARCHAR(64)       NOT NULL,
+    subscription_id  BIGINT            NOT NULL,
+    origin_id        BIGINT                NULL,
+    type             VARCHAR(30)       NOT NULL,
+    payload          JSON              NOT NULL,
+    status           VARCHAR(10)       NOT NULL DEFAULT 'pending',
+    attempts         SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    next_attempt_at  DATETIME(6)       NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    delivered_at     DATETIME(6)           NULL,
+    last_error       VARCHAR(300)          NULL,
+    created_at       DATETIME(6)       NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+
+    CONSTRAINT pk_outboundevent PRIMARY KEY (id),
+    --  El mismo evento no se le manda dos veces a la misma suscripcion.
+    CONSTRAINT uq_outboundevent UNIQUE (event_id, subscription_id),
+
+    CONSTRAINT fk_outboundevent_subscription FOREIGN KEY (subscription_id)
+        REFERENCES integracion_subscription (id) ON DELETE CASCADE,
+    CONSTRAINT fk_outboundevent_origin FOREIGN KEY (origin_id)
+        REFERENCES integracion_inboundevent (id) ON DELETE SET NULL,
+
+    CONSTRAINT ck_outboundevent_status CHECK (
+        status IN ('pending', 'delivered', 'failed')
+    ),
+
+    INDEX ix_outboundevent_por_enviar (status, next_attempt_at)
 ) ENGINE=InnoDB;
 
 

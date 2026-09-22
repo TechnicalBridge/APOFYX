@@ -312,6 +312,9 @@ def recibir_cartera(creditor, payload, source=Batch.Source.API):
     return respuesta
 
 
+SE_CONSERVAN = (Debt.Status.OPEN, Debt.Status.REPACTED, Debt.Status.DISPUTED)
+
+
 def _guardar_deuda(creditor, batch, id_deuda, datos, existente):
     """Crea o actualiza la deuda y reemplaza sus cargos."""
     deudor_datos = datos["deudor"]
@@ -343,18 +346,23 @@ def _guardar_deuda(creditor, batch, id_deuda, datos, existente):
         (c.concept, c.period, c.amount, c.due_date)
         for c in existente.charges.order_by("due_date", "concept")
     ]
+    #  Un convenio o una disputa no se borran porque el acreedor vuelva a mandar
+    #  la deuda en la cartera del mes: se entero de ellos por los eventos, y
+    #  reenviar la cartera no es una decision sobre ese deudor. Solo un retiro
+    #  se deshace al volver a registrar.
+    estado = existente.status if existente.status in SE_CONSERVAN else Debt.Status.OPEN
     sin_cambios = (
         actuales == nuevos
         and existente.debtor_id == deudor.id
         and existente.concept == datos["concepto"]
         and existente.currency == datos["moneda"]
-        and existente.status == Debt.Status.OPEN
+        and existente.status == estado
     )
     existente.debtor = deudor
     existente.currency = datos["moneda"]
     existente.concept = datos["concepto"]
     existente.refs = datos["referencias"]
-    existente.status = Debt.Status.OPEN
+    existente.status = estado
     existente.withdrawn_reason = None
     existente.last_batch = batch
     existente.save()

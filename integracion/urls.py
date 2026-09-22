@@ -8,4 +8,5 @@ app_name = "integracion"
 
 urlpatterns = [
     path("v1/carteras", views.carteras, name="carteras"),
+    path("v1/eventos", views.eventos, name="eventos"),
 ]

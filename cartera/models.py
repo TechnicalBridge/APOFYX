@@ -172,6 +172,7 @@ class Debt(models.Model):
 
     class Status(models.TextChoices):
         OPEN = "open", "En gestion"
+        REPACTED = "repacted", "En convenio de pago"
         PAID = "paid", "Pagada"
         WITHDRAWN = "withdrawn", "Retirada por el acreedor"
         DISPUTED = "disputed", "Disputada"
@@ -221,7 +222,9 @@ class Debt(models.Model):
                 condition=models.Q(currency__in=["CLP", "UF"]), name="ck_debt_currency"
             ),
             models.CheckConstraint(
-                condition=models.Q(status__in=["open", "paid", "withdrawn", "disputed"]),
+                condition=models.Q(
+                    status__in=["open", "repacted", "paid", "withdrawn", "disputed"]
+                ),
                 name="ck_debt_status",
             ),
         ]

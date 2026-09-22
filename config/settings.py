@@ -199,4 +199,8 @@ DATABRIDGE = {
     # Intentar el reenvio apenas se recibe la cartera. Si falla, queda en la
     # bandeja y lo retoma `manage.py despachar_reenvios`.
     "REENVIO_INMEDIATO": env_bool("DATABRIDGE_REENVIO_INMEDIATO", True),
+    # Con el que DataBridge firma los eventos que le manda a APOFYX. Lo entrega
+    # DataBridge al suscribirse (manage.py suscribirse_a_databridge). Vacio =
+    # APOFYX no recibe eventos.
+    "SECRETO_EVENTOS": env("DATABRIDGE_SECRETO_EVENTOS", ""),
 }

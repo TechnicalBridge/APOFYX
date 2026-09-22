@@ -859,6 +859,33 @@ después a DataBridge: un solo contrato para toda la cadena.
 - Un **retiro** saca de gestión una deuda que el acreedor cobró por su cuenta. Es lo que evita
   seguir cobrándole a alguien que ya pagó.
 
+**El reenvío a DataBridge.** Cada entrega aceptada se le pasa a DataBridge en el mismo formato.
+APOFYX agrega solo lo que le toca: su **mandato** (su RUT y la campaña a la que asignó la
+cartera) y su propio número de lote. Montos, cargos e ids de deuda salen idénticos a como
+entraron; el id del contrato de arriendo es lo que permite que un pago vuelva hasta él.
+
+- Pasa por una **bandeja de salida** (`integracion_forward`) que se escribe en la misma
+  transacción que recibe. Si DataBridge está caído, el acreedor igual recibe su respuesta y el
+  reenvío se reintenta: 1 min, 5 min, 30 min, 2 h, 6 h y 24 h, y después queda como fallido.
+- Sin campaña no se reenvía. Si el acreedor tiene una sola en curso se usa esa; con cero o con
+  varias el reenvío **espera** a que alguien la asigne. Adivinar mandaría la cartera a cobrarse
+  con los canales equivocados.
+- La traducción de vocabulario vive en el borde: las campañas de APOFYX dicen `email` y
+  DataBridge dice `correo`. El SMS no tiene equivalente en DataBridge (§13.2) y no viaja.
+- Sin URL ni clave de DataBridge el reenvío está apagado y APOFYX trabaja solo, como antes.
+
+**Los eventos de vuelta.** Cuando el deudor paga o acepta un plan en DataBridge, DataBridge le
+avisa a APOFYX, firmado. APOFYX pone al día el estado de la deuda —pagada, en convenio,
+disputada— y se lo reporta a su cliente con un evento nuevo, firmado con el secreto del cliente
+y con el lote del cliente en vez del suyo. **Sigue sin haber tablas de pago**: APOFYX guarda el
+evento como rastro de por qué cambió el estado, pero el dinero y el saldo son de DataBridge.
+
+- Un aviso atrasado no reabre una deuda pagada: los eventos no llegan en orden garantizado.
+- Un convenio sobrevive a la cartera del mes siguiente. Que el acreedor vuelva a mandar la
+  deuda no es una decisión sobre ese deudor.
+- Esto le da a APOFYX lo que §11.3 dice que le falta: saber qué se pagó, sin esperar la
+  planilla de fin de mes.
+
 ### 12.5 Principio rector
 
 El producto se construye **como lo vendería la empresa**: creíble, limpio, sin autocrítica dentro de
@@ -1004,8 +1031,8 @@ Para que no quede ambigüedad, **nada de lo siguiente se construye aquí**:
 - El portal sin login y todo lo relativo a pagos, conciliación y comprobantes.
 
 Lo que **sí** se construye aquí, y que esta sección decía que no: **el lado de APOFYX de la
-integración** (§12.4). Recibe la cartera de sus clientes y, más adelante, se la pasará a DataBridge
-con el mismo contrato. Lo que corre *dentro* de DataBridge sigue siendo de su repositorio.
+integración** (§12.4). Recibe la cartera de sus clientes y se la pasa a DataBridge con el mismo
+contrato. Lo que corre *dentro* de DataBridge sigue siendo de su repositorio.
 
 Este repositorio construye **el sitio de APOFYX, su panel de clientes y su asistente** (§12). El rol
 de DataBridge se documenta porque define el contexto del caso y explica hacia dónde va APOFYX, no
@@ -1065,7 +1092,7 @@ textos de la interfaz y los datos siguen en español.
 
 | Parte | Contenido |
 | --- | --- |
-| 1 — DDL | Base de datos, **12 tablas**, 13 claves foraneas, 20 CHECK, 13 UNIQUE y **3 vistas** |
+| 1 — DDL | Base de datos, **21 tablas**, 25 claves foraneas, 28 CHECK, 20 UNIQUE y **3 vistas** |
 | 2 — DML | Datos de referencia que la aplicacion necesita: 6 rubros y 3 planes |
 | 3 — DML | Datos de demostracion: los 5 clientes de §6.1 con contactos, carteras, campanas y metricas |
 | 4 — DML | Catalogo del asistente: **19 intenciones, 116 patrones y 19 respuestas** (§9.2) |
@@ -1376,7 +1403,7 @@ cp .env.example .env         # en Windows:  copy .env.example .env
 docker compose up -d
 ```
 
-Eso es todo. En unos 15 segundos hay un MySQL 8.4.11 con las 13 tablas, las 3 vistas y los datos de
+Eso es todo. En unos 15 segundos hay un MySQL 8.4.11 con las 21 tablas, las 3 vistas y los datos de
 demostración ya cargados, porque `sql/AphofyxDB.sql` se monta en `/docker-entrypoint-initdb.d/`.
 
 **Credenciales por defecto** (en `.env`, cambiables):
@@ -1540,7 +1567,7 @@ Este proyecto documenta y modela un sistema que se confunde con un fraude. Lo qu
 
 | # | Decisión | Resolución |
 | --- | --- | --- |
-| **D1** | Relación con Technical Bridge | **Cliente que termina integrándose a DataBridge**, el software de Technical Bridge (§13). **Actualizada el 19-09-2026:** la integración pasó de documentarse a construirse. Aquí vive el lado de APOFYX —recibir la cartera de sus clientes (§12.4)— bajo el contrato común de `TB_web/docs/integracion/` |
+| **D1** | Relación con Technical Bridge | **Cliente que termina integrándose a DataBridge**, el software de Technical Bridge (§13). **Actualizada el 19-09-2026:** la integración pasó de documentarse a construirse. Aquí vive el lado de APOFYX —recibir la cartera de sus clientes y pasársela a DataBridge (§12.4)— bajo el contrato común de `TB_web/docs/integracion/` |
 | **D2** | ¿La app se autocritica? | **No.** Producto limpio; la crítica vive en esta documentación (§12.4) |
 | **D3** | Stack | **Django 6.1.1 + MySQL 8.4 + HTML/CSS/JS, JSON.** Modelos relacionales reales, sin data falsa hardcodeada (§14) |
 | **D8** | Alcance | **Solo APOFYX**: landing B2B, panel de clientes, asistente y **recepción de cartera**. **Sin pagos**: ninguna tabla de pago ni de transacción (§12) |

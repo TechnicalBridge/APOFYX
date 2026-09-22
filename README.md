@@ -1,5 +1,7 @@
 # APOFYX
 
+[![CI](https://github.com/TechnicalBridge/APOFYX/actions/workflows/ci.yml/badge.svg)](https://github.com/TechnicalBridge/APOFYX/actions/workflows/ci.yml)
+
 Sitio corporativo y panel de administración de **APOFYX**, una empresa de cobranza
 extrajudicial para carteras masivas de ticket bajo.
 
@@ -65,6 +67,10 @@ mostrar esto a alguien.**
 > modelos son su espejo. Con esa bandera Django reconoce las tablas existentes y las
 > adopta en vez de intentar crearlas de nuevo. De ahí en adelante mandan las
 > migraciones.
+>
+> La bandera solo cubre las migraciones *iniciales*. Las posteriores que crean algo
+> que el DDL ya trae van envueltas en `SiFalta` (`crm/operaciones.py`): en una base
+> nueva lo encuentran y siguen; en una antigua lo crean.
 
 ---
 
@@ -76,7 +82,7 @@ APOFYX/
 ├── crm/               clientes B2B, carteras, campañas y leads
 ├── assistant/         catálogo del asistente del sitio y conversaciones
 ├── cartera/           deudores, deudas y cargos que entregan los acreedores
-├── integracion/       el borde por donde entra esa cartera
+├── integracion/       el borde: cartera que entra y sale, eventos que vuelven
 ├── templates/         base, sitio público y panel
 ├── static/
 │   ├── vendor/        Bootstrap y tipografías, en local para no depender de internet
@@ -108,11 +114,73 @@ que no se puede volver a leer. Si se pierde, se emite otra con
 Sin claves emitidas nadie puede enviar nada, y APOFYX funciona igual con la carga
 a mano del panel.
 
+### Pasársela a DataBridge
+
+Con `DATABRIDGE_URL` y `DATABRIDGE_CLAVE` en el `.env`, cada entrega aceptada se
+reenvía a DataBridge en el mismo formato, con el mandato de APOFYX y la campaña
+agregados. Los montos, los cargos y los ids de deuda no se tocan.
+
+El reenvío pasa por una bandeja de salida (`integracion_forward`), así que el
+acreedor recibe su respuesta aunque DataBridge esté caído. Lo que no se pudo
+entregar se reintenta con esperas crecientes (1 min, 5 min, 30 min, 2 h, 6 h,
+24 h) hasta seis veces:
+
+```bash
+python manage.py despachar_reenvios      # lo pendiente que ya toca
+```
+
+En desarrollo el primer intento sale apenas se recibe, dentro de la misma
+petición, y si DataBridge no contesta el acreedor espera ese intento fallido
+(unos 2 s con DataBridge apagado; hasta `DATABRIDGE_TIMEOUT_S` si está colgado).
+En producción conviene `DATABRIDGE_REENVIO_INMEDIATO=0` y correr
+`despachar_reenvios` cada minuto con el programador de tareas: la recepción queda
+completamente separada de DataBridge.
+
+Una entrega necesita campaña. Si el acreedor tiene exactamente una en curso, se
+usa esa; con cero o con varias queda **esperando campaña** hasta que alguien la
+asigne en el panel, y el próximo despacho la retoma.
+
+Sin esas dos variables el reenvío está apagado y APOFYX trabaja solo.
+
+### Los eventos de vuelta
+
+Cuando un deudor paga o acepta un plan en DataBridge, DataBridge le avisa a
+APOFYX, APOFYX pone al día la deuda y se lo reporta al cliente con el mismo
+formato. Patrimonio marca pagados los cargos del contrato sin saber que detrás
+hay DataBridge.
+
+```bash
+# 1. APOFYX le dice a DataBridge dónde avisarle. Devuelve el secreto con que
+#    DataBridge firma: va al .env como DATABRIDGE_SECRETO_EVENTOS.
+python manage.py suscribirse_a_databridge https://apofyx.cl/api/v1/eventos
+
+# 2. APOFYX registra dónde avisarle a cada cliente. Devuelve el secreto que el
+#    cliente configura de su lado (en Patrimonio, EVENTOS_SECRET).
+python manage.py suscribir_cliente 76418902-7 http://localhost:3001/api/eventos
+```
+
+| Evento | Qué le pasa a la deuda en APOFYX |
+| --- | --- |
+| `pago.confirmado` | Se anota. El estado no cambia: el saldo vive en DataBridge |
+| `deuda.saldada` | Pasa a **pagada** |
+| `repactacion.aceptada` | Pasa a **en convenio de pago**, y la cartera del mes siguiente no la reabre |
+| `deuda.disputada` | Pasa a **disputada** |
+| `deuda.retirada` | Pasa a **retirada** |
+
+Cada evento se verifica con HMAC y se descarta si tiene más de 5 minutos. El
+mismo evento dos veces se procesa una. Los eventos no llegan en orden
+garantizado, así que un aviso atrasado no reabre una deuda ya pagada. Los avisos
+al cliente pasan por su propia bandeja de salida y los reintenta el mismo
+`despachar_reenvios`.
+
+Sin `DATABRIDGE_SECRETO_EVENTOS` APOFYX no recibe eventos; sin suscripción del
+cliente, los eventos ponen al día la cartera pero no salen a ninguna parte.
+
 ---
 
 ## Base de datos
 
-17 tablas y 3 vistas. **APOFYX sí guarda deudores y deudas**: es una empresa de
+21 tablas y 3 vistas. **APOFYX sí guarda deudores y deudas**: es una empresa de
 cobranza y sin la cartera no tiene nada que trabajar. Lo que **no existe** es
 ninguna tabla de pago ni de transacción; el dinero lo mueve DataBridge y acá solo
 llega el aviso.
