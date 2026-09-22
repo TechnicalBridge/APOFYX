@@ -49,3 +49,20 @@ def valores_del_check(nombre, texto=None):
     """Los literales de un CHECK de lista: {'onboarding', 'active', ...}."""
     clausula = clausula_check(nombre, texto)
     return set(re.findall(r"'([^']+)'", clausula)) if clausula else None
+
+
+def valores_del_enum(tabla, columna, texto=None):
+    """
+    Los valores de una columna ENUM: {'open', 'repacted', ...}.
+
+    Las categorias cerradas se guardan como ENUM y no como VARCHAR con CHECK
+    (ver crm/campos.py). El ENUM es la restriccion, asi que la comparacion
+    contra las choices del modelo se hace contra el, no contra un CHECK.
+    """
+    texto = ddl() if texto is None else texto
+    inicio = texto.find(f"CREATE TABLE {tabla} (")
+    if inicio == -1:
+        return None
+    bloque = texto[inicio:texto.index("ENGINE=InnoDB", inicio)]
+    declaracion = re.search(rf"^\s+{columna}\s+ENUM\(([^)]*)\)", bloque, re.M)
+    return set(re.findall(r"'([^']+)'", declaracion.group(1))) if declaracion else None

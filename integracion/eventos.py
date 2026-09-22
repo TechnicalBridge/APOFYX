@@ -30,10 +30,10 @@ import uuid
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
-from django.utils.dateparse import parse_datetime
+from django.utils.dateparse import parse_date, parse_datetime
 
 from cartera.models import Debt
-from crm.models import Creditor
+from crm.models import Campaign, CampaignFunnelSnapshot, Creditor
 from crm.rut import normalizar
 
 from .models import InboundEvent, OutboundEvent
@@ -125,8 +125,17 @@ def recibir_evento(evento):
 
 
 def _fecha(texto):
+    """La fecha y hora en que ocurrio algo: '2026-09-22T14:03:11-03:00'."""
     try:
         return parse_datetime(str(texto or ""))
+    except ValueError:
+        return None
+
+
+def _dia(texto):
+    """Un dia sin hora: '2026-09-22'."""
+    try:
+        return parse_date(str(texto or ""))
     except ValueError:
         return None
 
@@ -134,6 +143,8 @@ def _fecha(texto):
 def _aplicar(tipo, deuda, acreedor, datos):
     if acreedor is None:
         return "acreedor desconocido"
+    if tipo == "campana.avance":
+        return _guardar_avance(acreedor, datos)
     if datos.get("deuda_id_externo") is None:
         return "anotado"
     if deuda is None:
@@ -153,6 +164,48 @@ def _aplicar(tipo, deuda, acreedor, datos):
         deuda.withdrawn_reason = str(datos["motivo"])[:30]
     deuda.save(update_fields=["status", "withdrawn_reason", "updated_at"])
     return f"{anterior} -> {deuda.get_status_display().lower()}"
+
+
+def _campana_de(acreedor, id_externo):
+    """El id con que APOFYX presenta sus campanas: APX-CMP-<id>."""
+    if not str(id_externo or "").startswith("APX-CMP-"):
+        return None
+    numero = str(id_externo)[len("APX-CMP-"):]
+    if not numero.isdigit():
+        return None
+    return Campaign.objects.filter(pk=int(numero), creditor=acreedor).first()
+
+
+def _guardar_avance(acreedor, datos):
+    """
+    El embudo de la campana, con lo que APOFYX no podia medir sola: cuantos
+    pagaron y cuanto se recupero (docs 11.3).
+
+    Solo se escriben las columnas que el evento trae. Un campo ausente no es
+    un cero: es algo que DataBridge todavia no mide, y ponerle cero seria
+    afirmar que no paso.
+    """
+    campana = _campana_de(acreedor, datos.get("campana_id_externo"))
+    if campana is None:
+        return "campana desconocida"
+    corte = _dia(datos.get("fecha_corte"))
+    if corte is None:
+        return "sin fecha de corte"
+
+    columnas = {
+        "enviados": "messages_sent",
+        "ingresos_portal": "link_clicks",
+        "disputas": "debt_disputes",
+        "pagos": "payments",
+        "recuperado_clp": "recovered_clp",
+        "recuperado_uf": "recovered_uf",
+    }
+    valores = {columna: datos[campo] for campo, columna in columnas.items() if datos.get(campo) is not None}
+    CampaignFunnelSnapshot.objects.update_or_create(
+        campaign=campana, measured_on=corte,
+        defaults=valores,
+    )
+    return f"embudo al {datos.get('fecha_corte')}: {valores.get('payments', 0)} pago(s)"
 
 
 def _encolar_para_el_cliente(recibido, evento, acreedor, deuda):

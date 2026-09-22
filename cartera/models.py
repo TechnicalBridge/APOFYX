@@ -22,6 +22,8 @@ espanol. Las tablas llevan el prefijo de la app: cartera_debtor, cartera_debt.
 from django.core.validators import MinValueValidator
 from django.db import models
 
+from crm.campos import Categoria
+
 
 class Batch(models.Model):
     """
@@ -58,10 +60,10 @@ class Batch(models.Model):
         verbose_name="campana", db_column="campaign_id", blank=True, null=True,
         help_text="Se asigna despues de recibir, al armar la campana.",
     )
-    source = models.CharField(
+    source = Categoria(
         "origen", max_length=10, choices=Source.choices, default=Source.API
     )
-    status = models.CharField(
+    status = Categoria(
         "estado", max_length=20, choices=Status.choices, default=Status.RECEIVED
     )
     received_count = models.PositiveIntegerField("deudas recibidas", default=0)
@@ -83,13 +85,6 @@ class Batch(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["creditor", "external_id"], name="uq_batch_external"
-            ),
-            models.CheckConstraint(
-                condition=models.Q(source__in=["api", "file"]), name="ck_batch_source"
-            ),
-            models.CheckConstraint(
-                condition=models.Q(status__in=["received", "processed", "rejected"]),
-                name="ck_batch_status",
             ),
         ]
 
@@ -118,7 +113,7 @@ class Debtor(models.Model):
         "RUT", max_length=12, unique=True,
         help_text="Normalizado, sin puntos y con guion: 16482337-7",
     )
-    kind = models.CharField(
+    kind = Categoria(
         "tipo", max_length=10, choices=Kind.choices, default=Kind.PERSON
     )
     full_name = models.CharField("nombre", max_length=160)
@@ -133,9 +128,6 @@ class Debtor(models.Model):
         verbose_name_plural = "deudores"
         ordering = ["full_name"]
         constraints = [
-            models.CheckConstraint(
-                condition=models.Q(kind__in=["person", "company"]), name="ck_debtor_kind"
-            ),
             # Sin correo ni telefono no hay por donde cobrarle. Es la misma
             # regla que el contrato de integracion llama 'sin_canal_contacto'.
             models.CheckConstraint(
@@ -170,6 +162,10 @@ class Debt(models.Model):
     llegar en varias entregas, actualizada.
     """
 
+    class Currency(models.TextChoices):
+        CLP = "CLP", "Pesos"
+        UF = "UF", "UF"
+
     class Status(models.TextChoices):
         OPEN = "open", "En gestion"
         REPACTED = "repacted", "En convenio de pago"
@@ -186,13 +182,15 @@ class Debt(models.Model):
         verbose_name="deudor", db_column="debtor_id",
     )
     external_id = models.CharField("id en el acreedor", max_length=64)
-    currency = models.CharField("moneda", max_length=3, default="CLP")
+    currency = Categoria(
+        "moneda", max_length=3, choices=Currency.choices, default=Currency.CLP
+    )
     concept = models.CharField("concepto", max_length=200)
     refs = models.JSONField(
         "referencias", default=dict, blank=True,
         help_text="Lo que se le muestra al deudor para que reconozca la deuda.",
     )
-    status = models.CharField(
+    status = Categoria(
         "estado", max_length=20, choices=Status.choices, default=Status.OPEN
     )
     first_batch = models.ForeignKey(
@@ -217,15 +215,6 @@ class Debt(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["creditor", "external_id"], name="uq_debt_external"
-            ),
-            models.CheckConstraint(
-                condition=models.Q(currency__in=["CLP", "UF"]), name="ck_debt_currency"
-            ),
-            models.CheckConstraint(
-                condition=models.Q(
-                    status__in=["open", "repacted", "paid", "withdrawn", "disputed"]
-                ),
-                name="ck_debt_status",
             ),
         ]
         indexes = [

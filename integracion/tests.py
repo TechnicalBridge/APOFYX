@@ -22,7 +22,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from cartera.models import Batch, Debt, DebtCharge, Debtor
-from crm.models import Creditor, Industry
+from crm.models import Campaign, CampaignFunnelSnapshot, Creditor, Industry
 
 from .intake import CarteraInvalida, recibir_cartera
 from .models import ApiKey
@@ -391,8 +391,7 @@ from datetime import date as _date  # noqa: E402
 
 from django.test import override_settings  # noqa: E402
 
-from crm.esquema import valores_del_check  # noqa: E402
-from crm.models import Campaign  # noqa: E402
+from crm.esquema import valores_del_enum  # noqa: E402
 
 from .models import Forward  # noqa: E402
 from .reenvio import (  # noqa: E402
@@ -561,7 +560,8 @@ class ElVocabularioSeTraduceEnElBorde(TestCase):
                          ["whatsapp", "correo"])
 
     def test_el_check_de_la_bandeja_calza_con_el_modelo(self):
-        self.assertEqual(valores_del_check("ck_forward_status"), set(Forward.Status.values))
+        self.assertEqual(valores_del_enum("integracion_forward", "status"),
+                         set(Forward.Status.values))
 
 
 @override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
@@ -833,5 +833,103 @@ class ElEndpointDeEventos(TestCase):
         self.assertEqual(Debt.objects.get(external_id="CTR-2025-014").status, Debt.Status.PAID)
 
     def test_el_check_de_la_bandeja_de_avisos_calza_con_el_modelo(self):
-        self.assertEqual(valores_del_check("ck_outboundevent_status"),
+        self.assertEqual(valores_del_enum("integracion_outboundevent", "status"),
                          set(OutboundEvent.Status.values))
+
+@override_settings(DATABRIDGE=CON_EVENTOS)
+class ElAvanceDeLaCampanaLlenaElEmbudo(TestCase):
+    """
+    Lo que APOFYX no podia medir sola: hasta donde llega su embudo terminaba en
+    el mensaje enviado, porque el pago ocurria fuera de su producto (docs 11.3).
+    """
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        self.campana = campana_de(self.acreedor)
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+    def avance(self, **datos):
+        return {
+            "id": f"evt_avance_{len(datos)}",
+            "tipo": "campana.avance",
+            "version": "1",
+            "ocurrido_en": "2026-09-22T08:00:00-03:00",
+            "acreedor_rut": RUT_PATRIMONIO,
+            "datos": {"campana_id_externo": f"APX-CMP-{self.campana.pk}",
+                      "fecha_corte": "2026-09-22", **datos},
+        }
+
+    def test_guarda_los_pagos_y_lo_recuperado(self):
+        respuesta = recibir_evento(self.avance(
+            enviados=3, ingresos_portal=2, pagos=1, recuperado_clp=410000, recuperado_uf="19.25"))
+
+        self.assertIn("embudo al 2026-09-22", respuesta["resultado"])
+        foto = CampaignFunnelSnapshot.objects.get()
+        self.assertEqual(foto.campaign, self.campana)
+        self.assertEqual(str(foto.measured_on), "2026-09-22")
+        self.assertEqual(foto.messages_sent, 3)
+        self.assertEqual(foto.link_clicks, 2)          # ingresos al portal
+        self.assertEqual(foto.payments, 1)
+        self.assertEqual(foto.recovered_clp, 410000)
+        self.assertEqual(str(foto.recovered_uf), "19.25")
+
+    def test_los_pesos_y_las_uf_no_se_suman(self):
+        recibir_evento(self.avance(pagos=2, recuperado_clp=410000, recuperado_uf="19.25"))
+        foto = CampaignFunnelSnapshot.objects.get()
+        self.assertEqual((foto.recovered_clp, str(foto.recovered_uf)), (410000, "19.25"))
+
+    def test_lo_que_databridge_no_mide_no_queda_en_cero(self):
+        """Un cero diria "ninguno"; lo que falta es "no lo se"."""
+        CampaignFunnelSnapshot.objects.create(
+            campaign=self.campana, measured_on=date(2026, 9, 22),
+            messages_delivered=7, replies_received=2,
+        )
+        recibir_evento(self.avance(enviados=3, pagos=1))
+        foto = CampaignFunnelSnapshot.objects.get()
+        self.assertEqual((foto.messages_delivered, foto.replies_received), (7, 2))
+        self.assertEqual(foto.messages_sent, 3)
+
+    def test_el_mismo_dia_se_actualiza_en_vez_de_duplicarse(self):
+        recibir_evento(self.avance(pagos=1))
+        segundo = self.avance(pagos=2)
+        segundo["id"] = "evt_avance_mas_tarde"
+        recibir_evento(segundo)
+        self.assertEqual(CampaignFunnelSnapshot.objects.count(), 1)
+        self.assertEqual(CampaignFunnelSnapshot.objects.get().payments, 2)
+
+    def test_una_campana_de_otro_acreedor_no_se_toca(self):
+        otro = crear_acreedor("77812341-K", "Otro Acreedor")
+        ajena = Campaign.objects.create(
+            creditor=otro, name="Ajena", starts_on=_date(2026, 9, 1),
+            status=Campaign.Status.RUNNING, channels=["email"])
+        evento = self.avance(pagos=9)
+        evento["datos"]["campana_id_externo"] = f"APX-CMP-{ajena.pk}"
+
+        respuesta = recibir_evento(evento)
+
+        self.assertEqual(respuesta["resultado"], "campana desconocida")
+        self.assertEqual(CampaignFunnelSnapshot.objects.count(), 0)
+
+    def test_el_avance_no_se_le_reenvia_al_cliente(self):
+        """Es la campana de APOFYX, no del acreedor: a Patrimonio no le dice nada."""
+        Subscription.registrar(self.acreedor, "http://patrimonio.prueba/api/eventos")
+        respuesta = recibir_evento(self.avance(pagos=1))
+        self.assertEqual(respuesta["avisados"], 0)
+        self.assertEqual(OutboundEvent.objects.count(), 0)
+
+
+@override_settings(DATABRIDGE=CON_EVENTOS)
+class ElLoteProcesadoSeAnota(TestCase):
+
+    def test_se_guarda_aunque_no_hable_de_una_deuda(self):
+        acreedor = crear_acreedor()
+        recibir_cartera(acreedor, cartera_de_ejemplo())
+        respuesta = recibir_evento({
+            "id": "evt_lote_1", "tipo": "lote.procesado", "version": "1",
+            "ocurrido_en": "2026-09-22T08:00:00-03:00", "acreedor_rut": RUT_PATRIMONIO,
+            "lote_id_externo": "APX-2026-09-18-0001",
+            "datos": {"periodo": "2026-09", "recibidas": 4, "aceptadas": 3, "rechazadas": 1,
+                      "tramos": [{"tramo": "31-90", "deudas": 2, "promedio_clp": 520000}]},
+        })
+        self.assertEqual(respuesta["resultado"], "anotado")
+        self.assertEqual(InboundEvent.objects.get().type, "lote.procesado")

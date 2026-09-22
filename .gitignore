@@ -15,6 +15,11 @@ db.sqlite3
 /staticfiles/
 *.log
 
+# --- Base de datos ---
+# Lo que deja sql/rehacer.sh: el respaldo previo y los datos en transito.
+sql/.respaldo-*.sql
+sql/.datos-*.sql
+
 # --- Editores y sistema ---
 .vscode/
 .idea/

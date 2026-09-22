@@ -15,6 +15,8 @@ import secrets
 from datetime import timedelta
 
 from django.db import models
+
+from crm.campos import Categoria
 from django.utils import timezone
 
 
@@ -139,7 +141,7 @@ class Forward(models.Model):
         verbose_name="entrega recibida", db_column="batch_id",
     )
     external_id = models.CharField("id del lote hacia DataBridge", max_length=64, unique=True)
-    status = models.CharField(
+    status = Categoria(
         "estado", max_length=10, choices=Status.choices, default=Status.PENDING
     )
     attempts = models.PositiveSmallIntegerField("intentos", default=0)
@@ -155,10 +157,6 @@ class Forward(models.Model):
         verbose_name_plural = "reenvios a DataBridge"
         ordering = ["-created_at"]
         constraints = [
-            models.CheckConstraint(
-                condition=models.Q(status__in=["pending", "waiting", "sent", "failed"]),
-                name="ck_forward_status",
-            ),
         ]
         indexes = [
             models.Index(fields=["status", "next_attempt_at"], name="ix_forward_por_enviar"),
@@ -291,7 +289,7 @@ class OutboundEvent(models.Model):
     )
     type = models.CharField("tipo", max_length=30)
     payload = models.JSONField("evento")
-    status = models.CharField(
+    status = Categoria(
         "estado", max_length=10, choices=Status.choices, default=Status.PENDING
     )
     attempts = models.PositiveSmallIntegerField("intentos", default=0)
@@ -307,10 +305,6 @@ class OutboundEvent(models.Model):
         ordering = ["-created_at"]
         constraints = [
             models.UniqueConstraint(fields=["event_id", "subscription"], name="uq_outboundevent"),
-            models.CheckConstraint(
-                condition=models.Q(status__in=["pending", "delivered", "failed"]),
-                name="ck_outboundevent_status",
-            ),
         ]
         indexes = [
             models.Index(fields=["status", "next_attempt_at"], name="ix_outboundevent_por_enviar"),

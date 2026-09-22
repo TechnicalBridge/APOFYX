@@ -17,6 +17,8 @@ deuda, que vive en el portal del cliente.
 
 from django.db import models
 
+from crm.campos import Categoria
+
 
 class Intent(models.Model):
     """Una intencion reconocible: 'precios_planes', 'es_estafa', etc."""
@@ -28,7 +30,7 @@ class Intent(models.Model):
 
     slug = models.SlugField("identificador", max_length=60, unique=True)
     name = models.CharField("nombre", max_length=120)
-    audience = models.CharField(
+    audience = Categoria(
         "publico", max_length=20, choices=Audience.choices, default=Audience.GENERAL
     )
     description = models.CharField("descripcion", max_length=255, blank=True, null=True)
@@ -134,7 +136,7 @@ class Conversation(models.Model):
     """
 
     session_key = models.CharField("sesion", max_length=64, db_index=True)
-    inferred_audience = models.CharField(
+    inferred_audience = Categoria(
         "publico inferido", max_length=20,
         choices=Intent.Audience.choices, blank=True, null=True,
     )
@@ -176,7 +178,7 @@ class Message(models.Model):
         Conversation, on_delete=models.CASCADE, related_name="messages",
         verbose_name="conversacion", db_column="conversation_id",
     )
-    speaker = models.CharField("quien habla", max_length=10, choices=Speaker.choices)
+    speaker = Categoria("quien habla", max_length=10, choices=Speaker.choices)
     message_text = models.TextField("texto del mensaje")
     intent = models.ForeignKey(
         Intent, on_delete=models.SET_NULL, related_name="messages",
@@ -187,7 +189,7 @@ class Message(models.Model):
         "confianza de la coincidencia", max_digits=5, decimal_places=4,
         blank=True, null=True,
     )
-    answer_engine = models.CharField(
+    answer_engine = Categoria(
         "motor que respondio", max_length=10,
         choices=AnswerEngine.choices, blank=True, null=True,
     )

@@ -19,7 +19,7 @@
 --  abajo y volver a ejecutar el archivo completo.
 --
 --  CONTENIDO
---      PARTE 1 — DDL   base de datos, 21 tablas, restricciones, indices, vistas
+--      PARTE 1 — DDL   base de datos, 21 tablas, 4 vistas, restricciones e indices
 --      PARTE 2 — DML   datos de referencia (rubros)
 --      PARTE 3 — DML   datos de demostracion (5 clientes y sus campanas)
 --      PARTE 4 — DML   catalogo del asistente (intenciones, patrones, respuestas)
@@ -33,6 +33,17 @@
 --      · clave primaria   -> id BIGINT AUTO_INCREMENT
 --      · clave foranea    -> <campo>_id
 --      · fechas           -> DATETIME(6), precision de microsegundos
+--
+--  CATEGORIAS
+--  Los campos de lista cerrada (estados, tipos, origenes) son ENUM y no
+--  VARCHAR con CHECK. MySQL guarda un ENUM como un numero de un byte, asi que
+--  la tabla y sus indices pesan lo mismo que si la columna fuera un TINYINT
+--  —medido sobre 300.000 filas: 5,6 MB de indice contra 7,6 MB— pero se lee y
+--  se escribe como texto, de modo que una consulta dice status = 'paid' y el
+--  contrato de integracion, que viaja en texto, no traduce nada.
+--  El ENUM es ademas la restriccion: no lleva un CHECK al lado repitiendo la
+--  lista. Los CHECK que quedan dicen otra cosa (una fecha, un monto, una
+--  relacion entre dos columnas).
 --
 --  IDIOMA
 --  Identificadores en ingles, datos en espanol. En los campos con opciones eso
@@ -150,7 +161,7 @@ CREATE TABLE crm_creditor (
     trade_name    VARCHAR(120)  NOT NULL,
     tax_id        VARCHAR(12)   NOT NULL,
     industry_id   BIGINT        NOT NULL,
-    status        VARCHAR(20)   NOT NULL DEFAULT 'onboarding',
+    status        ENUM('onboarding', 'active', 'paused', 'churned')   NOT NULL DEFAULT 'onboarding',
     client_since  DATE              NULL,
     commune       VARCHAR(80)       NULL,
     region        VARCHAR(80)       NULL,
@@ -166,9 +177,6 @@ CREATE TABLE crm_creditor (
     CONSTRAINT fk_creditor_industry FOREIGN KEY (industry_id)
         REFERENCES crm_industry (id) ON DELETE RESTRICT,
 
-    CONSTRAINT ck_creditor_status CHECK (
-        status IN ('onboarding', 'active', 'paused', 'churned')
-    ),
     CONSTRAINT ck_creditor_tax_id CHECK (
         tax_id REGEXP '^[0-9]{7,8}-[0-9K]$'
     ),
@@ -225,7 +233,7 @@ CREATE TABLE crm_portfoliohandover (
     id              BIGINT         NOT NULL AUTO_INCREMENT,
     creditor_id      BIGINT         NOT NULL,
     period_month          DATE           NOT NULL,
-    overdue_bracket    VARCHAR(20)    NOT NULL,
+    overdue_bracket    ENUM('1-30', '31-90', '91-120')    NOT NULL,
     debtor_count    INT UNSIGNED   NOT NULL DEFAULT 0,
     average_debt_clp  DECIMAL(12,2)  NOT NULL DEFAULT 0,
     received_at     DATETIME(6)        NULL,
@@ -237,9 +245,6 @@ CREATE TABLE crm_portfoliohandover (
     CONSTRAINT fk_handover_creditor FOREIGN KEY (creditor_id)
         REFERENCES crm_creditor (id) ON DELETE CASCADE,
 
-    CONSTRAINT ck_handover_bracket CHECK (
-        overdue_bracket IN ('1-30', '31-90', '91-120')
-    ),
     CONSTRAINT ck_handover_debt CHECK (average_debt_clp >= 0),
 
     INDEX ix_handover_creditor_period (creditor_id, period_month)
@@ -260,7 +265,7 @@ CREATE TABLE crm_campaign (
     name          VARCHAR(120)      NOT NULL,
     starts_on     DATE              NOT NULL,
     ends_on       DATE                  NULL,
-    status        VARCHAR(20)       NOT NULL DEFAULT 'draft',
+    status        ENUM('draft', 'running', 'paused', 'finished')       NOT NULL DEFAULT 'draft',
     channels      JSON              NOT NULL,
     contact_attempts   SMALLINT UNSIGNED NOT NULL DEFAULT 3,
     created_at    DATETIME(6)       NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -274,9 +279,6 @@ CREATE TABLE crm_campaign (
     CONSTRAINT fk_campaign_creditor FOREIGN KEY (creditor_id)
         REFERENCES crm_creditor (id) ON DELETE CASCADE,
 
-    CONSTRAINT ck_campaign_status CHECK (
-        status IN ('draft', 'running', 'paused', 'finished')
-    ),
     CONSTRAINT ck_campaign_dates CHECK (ends_on IS NULL OR ends_on >= starts_on),
     CONSTRAINT ck_campaign_attempts CHECK (contact_attempts BETWEEN 1 AND 10),
 
@@ -308,6 +310,12 @@ CREATE TABLE crm_campaignfunnelsnapshot (
     fraud_reports   INT UNSIGNED  NOT NULL DEFAULT 0,
     optout_requests        INT UNSIGNED  NOT NULL DEFAULT 0,
     debt_disputes       INT UNSIGNED  NOT NULL DEFAULT 0,
+    --  Lo que APOFYX no podia medir sola (docs 11.3): el pago ocurre en
+    --  DataBridge y vuelve en el evento campana.avance. Pesos y UF separados,
+    --  porque sumarlos no significaria nada.
+    payments            INT UNSIGNED    NOT NULL DEFAULT 0,
+    recovered_clp       BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    recovered_uf        DECIMAL(12,2)   NOT NULL DEFAULT 0,
     created_at     DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 
     CONSTRAINT pk_snapshot      PRIMARY KEY (id),
@@ -336,7 +344,7 @@ CREATE TABLE assistant_intent (
     id            BIGINT       NOT NULL AUTO_INCREMENT,
     slug          VARCHAR(60)  NOT NULL,
     name          VARCHAR(120) NOT NULL,
-    audience      VARCHAR(20)  NOT NULL DEFAULT 'general',
+    audience      ENUM('prospect', 'debtor', 'general')  NOT NULL DEFAULT 'general',
     description   VARCHAR(255)     NULL,
     tiebreak_priority      SMALLINT     NOT NULL DEFAULT 100,
     is_active     BOOL         NOT NULL DEFAULT TRUE,
@@ -347,9 +355,6 @@ CREATE TABLE assistant_intent (
     CONSTRAINT pk_intent      PRIMARY KEY (id),
     CONSTRAINT uq_intent_slug UNIQUE (slug),
 
-    CONSTRAINT ck_intent_audience CHECK (
-        audience IN ('prospect', 'debtor', 'general')
-    ),
 
     INDEX ix_intent_audience (audience, is_active)
 ) ENGINE=InnoDB;
@@ -424,7 +429,7 @@ CREATE TABLE assistant_intentresponse (
 CREATE TABLE assistant_conversation (
     id                 BIGINT       NOT NULL AUTO_INCREMENT,
     session_key        VARCHAR(64)  NOT NULL,
-    inferred_audience  VARCHAR(20)      NULL,
+    inferred_audience  ENUM('prospect', 'debtor', 'general')      NULL,
     is_resolved        BOOL         NOT NULL DEFAULT FALSE,
     started_at         DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     last_activity_at   DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
@@ -433,10 +438,6 @@ CREATE TABLE assistant_conversation (
 
     CONSTRAINT pk_conversation PRIMARY KEY (id),
 
-    CONSTRAINT ck_conversation_audience CHECK (
-        inferred_audience IS NULL
-        OR inferred_audience IN ('prospect', 'debtor', 'general')
-    ),
 
     INDEX ix_conversation_session (session_key),
     INDEX ix_conversation_started (started_at)
@@ -456,11 +457,11 @@ CREATE TABLE assistant_conversation (
 CREATE TABLE assistant_message (
     id               BIGINT         NOT NULL AUTO_INCREMENT,
     conversation_id  BIGINT         NOT NULL,
-    speaker             VARCHAR(10)    NOT NULL,
+    speaker             ENUM('visitor', 'assistant')    NOT NULL,
     `message_text`           TEXT           NOT NULL,
     intent_id        BIGINT             NULL,
     match_confidence       DECIMAL(5,4)       NULL,
-    answer_engine           VARCHAR(10)        NULL,
+    answer_engine           ENUM('rules', 'llm', 'fallback')        NULL,
     response_time_ms       INT UNSIGNED       NULL,
     created_at       DATETIME(6)    NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 
@@ -471,14 +472,16 @@ CREATE TABLE assistant_message (
     CONSTRAINT fk_message_intent FOREIGN KEY (intent_id)
         REFERENCES assistant_intent (id) ON DELETE SET NULL,
 
-    CONSTRAINT ck_message_speaker CHECK (speaker IN ('visitor', 'assistant')),
     CONSTRAINT ck_message_match_confidence CHECK (
         match_confidence IS NULL OR (match_confidence >= 0 AND match_confidence <= 1)
     ),
+    --  Los valores posibles los declara el ENUM de la columna; lo que esta
+    --  regla dice es OTRA cosa: que el motor de respuesta lo tiene el
+    --  asistente y nunca el visitante.
     CONSTRAINT ck_message_engine CHECK (
         (speaker = 'visitor'   AND answer_engine IS NULL)
         OR
-        (speaker = 'assistant' AND answer_engine IN ('rules', 'llm', 'fallback'))
+        (speaker = 'assistant' AND answer_engine IS NOT NULL)
     ),
 
     INDEX ix_message_conversation (conversation_id, created_at),
@@ -512,10 +515,10 @@ CREATE TABLE crm_lead (
     phone              VARCHAR(20)         NULL,
     estimated_debtor_count     INT UNSIGNED        NULL,
     estimated_overdue_clp     BIGINT UNSIGNED     NULL,
-    current_collection_method VARCHAR(20)         NULL,
+    current_collection_method ENUM('nadie', 'llamadas', 'mensajes', 'externo', 'mixto')         NULL,
     industry_id      BIGINT            NULL,
-    source           VARCHAR(20)   NOT NULL DEFAULT 'form',
-    status           VARCHAR(20)   NOT NULL DEFAULT 'new',
+    source           ENUM('form', 'assistant')   NOT NULL DEFAULT 'form',
+    status           ENUM('new', 'contacted', 'qualified', 'converted', 'discarded')   NOT NULL DEFAULT 'new',
     inquiry_message  TEXT              NULL,
     conversation_id  BIGINT            NULL,
     converted_creditor_id BIGINT        NULL,
@@ -532,16 +535,8 @@ CREATE TABLE crm_lead (
     CONSTRAINT fk_lead_creditor FOREIGN KEY (converted_creditor_id)
         REFERENCES crm_creditor (id) ON DELETE SET NULL,
 
-    CONSTRAINT ck_lead_source CHECK (source IN ('form', 'assistant')),
     -- Los valores van en espanol a proposito (D12): aca no se guarda un estado
     -- interno del sistema sino lo que el lead declara de su propia operacion.
-    CONSTRAINT ck_lead_collection_method CHECK (
-        current_collection_method IS NULL
-        OR current_collection_method IN ('nadie', 'llamadas', 'mensajes', 'externo', 'mixto')
-    ),
-    CONSTRAINT ck_lead_status CHECK (
-        status IN ('new', 'contacted', 'qualified', 'converted', 'discarded')
-    ),
     --  REGLA QUE NO SE PUEDE EXPRESAR AQUI
     --  "un lead convertido debe apuntar a una empresa" seria el CHECK
     --      status <> 'converted' OR converted_creditor_id IS NOT NULL
@@ -594,8 +589,8 @@ CREATE TABLE cartera_batch (
     external_id     VARCHAR(64)   NOT NULL,
     cut_off         DATE          NOT NULL,
     campaign_id     BIGINT            NULL,
-    source          VARCHAR(10)   NOT NULL DEFAULT 'api',
-    status          VARCHAR(20)   NOT NULL DEFAULT 'received',
+    source          ENUM('api', 'file')   NOT NULL DEFAULT 'api',
+    status          ENUM('received', 'processed', 'rejected')   NOT NULL DEFAULT 'received',
     received_count  INT UNSIGNED  NOT NULL DEFAULT 0,
     accepted_count  INT UNSIGNED  NOT NULL DEFAULT 0,
     rejected_count  INT UNSIGNED  NOT NULL DEFAULT 0,
@@ -612,10 +607,6 @@ CREATE TABLE cartera_batch (
     CONSTRAINT fk_batch_campaign FOREIGN KEY (campaign_id)
         REFERENCES crm_campaign (id) ON DELETE SET NULL,
 
-    CONSTRAINT ck_batch_source CHECK (source IN ('api', 'file')),
-    CONSTRAINT ck_batch_status CHECK (
-        status IN ('received', 'processed', 'rejected')
-    ),
 
     INDEX ix_batch_campaign (campaign_id)
 ) ENGINE=InnoDB;
@@ -631,7 +622,7 @@ CREATE TABLE cartera_batch (
 CREATE TABLE cartera_debtor (
     id          BIGINT        NOT NULL AUTO_INCREMENT,
     tax_id      VARCHAR(12)   NOT NULL,
-    kind        VARCHAR(10)   NOT NULL DEFAULT 'person',
+    kind        ENUM('person', 'company')   NOT NULL DEFAULT 'person',
     full_name   VARCHAR(160)  NOT NULL,
     email       VARCHAR(254)      NULL,
     phone       VARCHAR(20)       NULL,
@@ -642,7 +633,6 @@ CREATE TABLE cartera_debtor (
     CONSTRAINT pk_debtor        PRIMARY KEY (id),
     CONSTRAINT uq_debtor_tax_id UNIQUE (tax_id),
 
-    CONSTRAINT ck_debtor_kind CHECK (kind IN ('person', 'company')),
     -- Sin correo ni telefono no hay por donde cobrarle. Es la regla que el
     -- contrato de integracion rechaza como 'sin_canal_contacto'.
     CONSTRAINT ck_debtor_contacto CHECK (email IS NOT NULL OR phone IS NOT NULL),
@@ -663,10 +653,10 @@ CREATE TABLE cartera_debt (
     creditor_id      BIGINT        NOT NULL,
     debtor_id        BIGINT        NOT NULL,
     external_id      VARCHAR(64)   NOT NULL,
-    currency         VARCHAR(3)    NOT NULL DEFAULT 'CLP',
+    currency         ENUM('CLP', 'UF')    NOT NULL DEFAULT 'CLP',
     concept          VARCHAR(200)  NOT NULL,
     refs             JSON          NOT NULL,
-    status           VARCHAR(20)   NOT NULL DEFAULT 'open',
+    status           ENUM('open', 'repacted', 'paid', 'withdrawn', 'disputed')   NOT NULL DEFAULT 'open',
     first_batch_id   BIGINT        NOT NULL,
     last_batch_id    BIGINT        NOT NULL,
     withdrawn_reason VARCHAR(30)       NULL,
@@ -686,10 +676,6 @@ CREATE TABLE cartera_debt (
     CONSTRAINT fk_debt_last_batch FOREIGN KEY (last_batch_id)
         REFERENCES cartera_batch (id) ON DELETE RESTRICT,
 
-    CONSTRAINT ck_debt_currency CHECK (currency IN ('CLP', 'UF')),
-    CONSTRAINT ck_debt_status CHECK (
-        status IN ('open', 'repacted', 'paid', 'withdrawn', 'disputed')
-    ),
 
     INDEX ix_debt_creditor_status (creditor_id, status),
     INDEX ix_debt_debtor (debtor_id)
@@ -780,7 +766,7 @@ CREATE TABLE integracion_forward (
     id               BIGINT            NOT NULL AUTO_INCREMENT,
     batch_id         BIGINT            NOT NULL,
     external_id      VARCHAR(64)       NOT NULL,
-    status           VARCHAR(10)       NOT NULL DEFAULT 'pending',
+    status           ENUM('pending', 'waiting', 'sent', 'failed')       NOT NULL DEFAULT 'pending',
     attempts         SMALLINT UNSIGNED NOT NULL DEFAULT 0,
     next_attempt_at  DATETIME(6)       NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     sent_at          DATETIME(6)           NULL,
@@ -795,9 +781,6 @@ CREATE TABLE integracion_forward (
     CONSTRAINT fk_forward_batch FOREIGN KEY (batch_id)
         REFERENCES cartera_batch (id) ON DELETE CASCADE,
 
-    CONSTRAINT ck_forward_status CHECK (
-        status IN ('pending', 'waiting', 'sent', 'failed')
-    ),
 
     --  Por aca entra el despachador: lo pendiente que ya toca reintentar.
     INDEX ix_forward_por_enviar (status, next_attempt_at)
@@ -870,7 +853,7 @@ CREATE TABLE integracion_outboundevent (
     origin_id        BIGINT                NULL,
     type             VARCHAR(30)       NOT NULL,
     payload          JSON              NOT NULL,
-    status           VARCHAR(10)       NOT NULL DEFAULT 'pending',
+    status           ENUM('pending', 'delivered', 'failed')       NOT NULL DEFAULT 'pending',
     attempts         SMALLINT UNSIGNED NOT NULL DEFAULT 0,
     next_attempt_at  DATETIME(6)       NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     delivered_at     DATETIME(6)           NULL,
@@ -886,9 +869,6 @@ CREATE TABLE integracion_outboundevent (
     CONSTRAINT fk_outboundevent_origin FOREIGN KEY (origin_id)
         REFERENCES integracion_inboundevent (id) ON DELETE SET NULL,
 
-    CONSTRAINT ck_outboundevent_status CHECK (
-        status IN ('pending', 'delivered', 'failed')
-    ),
 
     INDEX ix_outboundevent_por_enviar (status, next_attempt_at)
 ) ENGINE=InnoDB;
@@ -996,6 +976,88 @@ GROUP BY DATE(created_at);
 --  NO hay tabla de planes: APOFYX no publica tarifas. El sitio lleva siempre
 --  al formulario de contacto y el valor se cotiza caso a caso.
 -- =============================================================================
+
+-- -----------------------------------------------------------------------------
+--  v_deuda_features — la cartera lista para alimentar un modelo.
+--
+--  POR QUE EXISTE
+--  Las columnas de la base guardan las categorias como TEXTO ('open', 'UF',
+--  'persona'), porque es lo que hace legible una consulta y lo que el CHECK
+--  documenta. Un modelo, en cambio, necesita numeros. La conversion se hace
+--  aqui y no en las tablas: cambiarlas a numeros haria ilegible el resto del
+--  sistema y no ganaria nada, y volver a calcular esto en cada script haria
+--  que cada uno codificara distinto.
+--
+--  DOS CODIFICACIONES, SEGUN LO QUE SIGNIFIQUE LA CATEGORIA
+--  · tramo_orden es LABEL ENCODING: los tramos tienen orden (a mas tramo,
+--    mas dificil de cobrar), asi que un numero ordenado dice algo real.
+--        0 sin cargos vencidos · 1 (1-30) · 2 (31-90) · 3 (91-120) · 4 (>120)
+--  · el estado, la moneda, el tipo de deudor y los canales van ONE-HOT, una
+--    columna 0/1 por valor: no tienen orden. Numerarlos le diria al modelo
+--    que 'pagada' esta el doble de lejos de 'en gestion' que 'en convenio',
+--    y eso no significa nada.
+--
+--  La mora se mide contra la FECHA DE CORTE de la entrega, no contra hoy: asi
+--  la misma deuda da siempre el mismo numero, aunque el modelo se entrene otro
+--  dia.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_deuda_features AS
+SELECT
+    d.id                                              AS deuda_id,
+    d.creditor_id                                     AS acreedor_id,
+    b.campaign_id                                     AS campana_id,
+
+    --  Numericas, tal cual
+    COALESCE(c.cargos, 0)                             AS n_cargos,
+    COALESCE(c.monto, 0)                              AS monto_total,
+    COALESCE(DATEDIFF(b.cut_off, c.vence_primero), 0) AS dias_mora,
+    COALESCE(DATEDIFF(b.cut_off, a.client_since), 0)  AS antiguedad_cliente_dias,
+    COALESCE(cp.contact_attempts, 0)                  AS intentos_de_contacto,
+    COALESCE(ev.eventos, 0)                           AS eventos_recibidos,
+
+    --  Label encoding (ordinal)
+    CASE
+        WHEN c.vence_primero IS NULL                       THEN 0
+        WHEN DATEDIFF(b.cut_off, c.vence_primero) <= 30    THEN 1
+        WHEN DATEDIFF(b.cut_off, c.vence_primero) <= 90    THEN 2
+        WHEN DATEDIFF(b.cut_off, c.vence_primero) <= 120   THEN 3
+        ELSE 4
+    END                                               AS tramo_orden,
+
+    --  One-hot (nominales)
+    (d.status = 'open')                               AS estado_en_gestion,
+    (d.status = 'repacted')                           AS estado_en_convenio,
+    (d.status = 'paid')                               AS estado_pagada,
+    (d.status = 'withdrawn')                          AS estado_retirada,
+    (d.status = 'disputed')                           AS estado_disputada,
+    (d.currency = 'CLP')                              AS moneda_clp,
+    (d.currency = 'UF')                               AS moneda_uf,
+    (dr.kind = 'person')                              AS deudor_persona,
+    (dr.kind = 'company')                             AS deudor_empresa,
+    (dr.email IS NOT NULL AND dr.email <> '')         AS tiene_correo,
+    (dr.phone IS NOT NULL AND dr.phone <> '')         AS tiene_telefono,
+    (b.source = 'api')                                AS entrega_por_api,
+    (b.source = 'file')                               AS entrega_por_archivo,
+    COALESCE(JSON_CONTAINS(cp.channels, '"whatsapp"'), 0) AS canal_whatsapp,
+    COALESCE(JSON_CONTAINS(cp.channels, '"email"'), 0)    AS canal_correo,
+    COALESCE(JSON_CONTAINS(cp.channels, '"sms"'), 0)      AS canal_sms
+FROM cartera_debt d
+JOIN cartera_batch  b  ON b.id  = d.last_batch_id
+JOIN cartera_debtor dr ON dr.id = d.debtor_id
+JOIN crm_creditor   a  ON a.id  = d.creditor_id
+LEFT JOIN crm_campaign cp ON cp.id = b.campaign_id
+LEFT JOIN (
+    SELECT debt_id, COUNT(*) AS cargos, SUM(amount) AS monto, MIN(due_date) AS vence_primero
+      FROM cartera_debtcharge
+     GROUP BY debt_id
+) c ON c.debt_id = d.id
+LEFT JOIN (
+    SELECT debt_id, COUNT(*) AS eventos
+      FROM integracion_inboundevent
+     WHERE debt_id IS NOT NULL
+     GROUP BY debt_id
+) ev ON ev.debt_id = d.id;
+
 
 
 

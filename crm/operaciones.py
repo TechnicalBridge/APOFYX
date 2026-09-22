@@ -18,8 +18,8 @@ tres bases que existen:
     creada con un DDL anterior     le falta     -> lo crea
     la de pruebas (solo migracion) le falta     -> lo crea
 
-Solo acepta operaciones que crean algo con nombre propio, porque son las
-unicas en que "ya existe" se puede responder mirando la base.
+Solo acepta operaciones que crean algo que se puede buscar en la base: una
+tabla, una columna, una restriccion o un indice.
 """
 
 from django.db import migrations
@@ -30,7 +30,7 @@ class SiFalta(Operation):
     reversible = True
     reduces_to_sql = False
 
-    ACEPTADAS = (migrations.CreateModel, migrations.AddConstraint, migrations.AddIndex)
+    ACEPTADAS = (migrations.CreateModel, migrations.AddField, migrations.AddConstraint, migrations.AddIndex)
 
     def __init__(self, operacion):
         if not isinstance(operacion, self.ACEPTADAS):
@@ -66,6 +66,53 @@ class SiFalta(Operation):
             return tabla in introspeccion.table_names()
 
         tabla = estado.apps.get_model(app_label, op.model_name)._meta.db_table
+        if isinstance(op, migrations.AddField):
+            columna = estado.apps.get_model(app_label, op.model_name)._meta.get_field(op.name).column
+            with schema_editor.connection.cursor() as cursor:
+                return any(c.name == columna for c in introspeccion.get_table_description(cursor, tabla))
         nombre = op.constraint.name if isinstance(op, migrations.AddConstraint) else op.index.name
         with schema_editor.connection.cursor() as cursor:
             return nombre in introspeccion.get_constraints(cursor, tabla)
+
+
+class SiSobra(Operation):
+    """
+    El reverso de {@link SiFalta}: quita algo solo si esta.
+
+    Cuando una restriccion desaparece del DDL —por ejemplo, el CHECK de una
+    categoria que paso a ser ENUM— la migracion que la quita se cae en una
+    base creada con el DDL nuevo, porque ahi nunca existio.
+    """
+
+    reversible = True
+    reduces_to_sql = False
+
+    ACEPTADAS = (migrations.RemoveConstraint, migrations.RemoveIndex)
+
+    def __init__(self, operacion):
+        if not isinstance(operacion, self.ACEPTADAS):
+            raise TypeError(f"SiSobra no sabe si existe lo que quita {type(operacion).__name__}")
+        self.operacion = operacion
+
+    def deconstruct(self):
+        return (f"{__name__}.{self.__class__.__qualname__}", [self.operacion], {})
+
+    def state_forwards(self, app_label, state):
+        self.operacion.state_forwards(app_label, state)
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        tabla = from_state.apps.get_model(app_label, self.operacion.model_name)._meta.db_table
+        with schema_editor.connection.cursor() as cursor:
+            existentes = schema_editor.connection.introspection.get_constraints(cursor, tabla)
+        if self.operacion.name in existentes:
+            self.operacion.database_forwards(app_label, schema_editor, from_state, to_state)
+
+    def database_backwards(self, app_label, schema_editor, from_state, to_state):
+        self.operacion.database_backwards(app_label, schema_editor, from_state, to_state)
+
+    def describe(self):
+        return f"{self.operacion.describe()} (si sobra)"
+
+    @property
+    def migration_name_fragment(self):
+        return self.operacion.migration_name_fragment

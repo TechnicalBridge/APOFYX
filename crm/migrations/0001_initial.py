@@ -20,7 +20,7 @@ class Migration(migrations.Migration):
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('legal_name', models.CharField(max_length=160, verbose_name='razon social')),
                 ('trade_name', models.CharField(max_length=120, verbose_name='nombre de fantasia')),
-                ('tax_id', models.CharField(help_text='Normalizado, sin puntos y con guion: 76543210-1', max_length=12, unique=True, verbose_name='RUT')),
+                ('tax_id', models.CharField(help_text='Normalizado, sin puntos y con guion: 76543210-3', max_length=12, unique=True, verbose_name='RUT')),
                 ('status', models.CharField(choices=[('onboarding', 'En incorporacion'), ('active', 'Activa'), ('paused', 'Pausada'), ('churned', 'Dada de baja')], default='onboarding', max_length=20, verbose_name='estado')),
                 ('client_since', models.DateField(blank=True, null=True, verbose_name='cliente desde')),
                 ('commune', models.CharField(blank=True, max_length=80, null=True, verbose_name='comuna')),

@@ -775,6 +775,14 @@ siquiera hay un mecanismo capaz de corregirse con el resultado.
 
 **Recuperado reportado:** 189 × $71.400 = **$13.494.600 CLP** · **success fee 7%: $944.622**.
 
+> **Qué cambia con la integración (22-09-2026).** El punto ciego se cierra: DataBridge le manda a
+> APOFYX un `campana.avance` diario por campaña con los pagos y lo recuperado, y un evento por cada
+> pago con el id de la deuda. El rezago pasa de 30 días a minutos, y la atribución deja de ser
+> imposible: cada pago viene con la deuda que lo originó. Lo que sigue sin medirse es la entrega del
+> mensaje, porque depende del proveedor de mensajería (§12.4).
+
+
+
 ### 11.4 Conversión de un clic a un pago
 
 De 738 clics, 189 pagos: **25,6%**. Dicho de otro modo, **el 74% de quienes ya superaron la sospecha
@@ -884,7 +892,19 @@ evento como rastro de por qué cambió el estado, pero el dinero y el saldo son 
 - Un convenio sobrevive a la cartera del mes siguiente. Que el acreedor vuelva a mandar la
   deuda no es una decisión sobre ese deudor.
 - Esto le da a APOFYX lo que §11.3 dice que le falta: saber qué se pagó, sin esperar la
-  planilla de fin de mes.
+  planilla de fin de mes. El evento `campana.avance` llega una vez al día por campaña y llena
+  `crm_campaignfunnelsnapshot`, que ahora tiene columnas de **pagos** y **recuperado** (en pesos
+  y en UF, separados). Y `link_clicks` pasó a contar **ingresos al portal**: con código de acceso
+  ya no hay enlace que tocar.
+- Lo que DataBridge no mide —si el mensaje se entregó, si respondieron, las bajas— no llega en
+  cero: llega ausente, y esas columnas quedan como estaban.
+
+**La cartera, lista para un modelo.** La vista `v_deuda_features` entrega cada deuda como una fila
+de números: **label encoding** para el tramo de mora, que sí tiene orden, y **one-hot** para lo que
+no lo tiene (estado, moneda, tipo de deudor, canales). Las tablas siguen guardando el texto, que es
+lo legible y lo que el `CHECK` documenta; codificarlas obligaría a traducir en el panel y en el
+contrato, que viaja en texto. `manage.py exportar_features` la saca en CSV. Es la base honesta para
+priorizar cobranza con un modelo, que es justo lo que §7.3 dice que hoy no existe.
 
 ### 12.5 Principio rector
 
@@ -1092,7 +1112,7 @@ textos de la interfaz y los datos siguen en español.
 
 | Parte | Contenido |
 | --- | --- |
-| 1 — DDL | Base de datos, **21 tablas**, 25 claves foraneas, 28 CHECK, 20 UNIQUE y **3 vistas** |
+| 1 — DDL | Base de datos, **21 tablas**, 25 claves foraneas, 28 CHECK, 20 UNIQUE y **4 vistas** |
 | 2 — DML | Datos de referencia que la aplicacion necesita: 6 rubros y 3 planes |
 | 3 — DML | Datos de demostracion: los 5 clientes de §6.1 con contactos, carteras, campanas y metricas |
 | 4 — DML | Catalogo del asistente: **19 intenciones, 116 patrones y 19 respuestas** (§9.2) |
@@ -1403,7 +1423,7 @@ cp .env.example .env         # en Windows:  copy .env.example .env
 docker compose up -d
 ```
 
-Eso es todo. En unos 15 segundos hay un MySQL 8.4.11 con las 21 tablas, las 3 vistas y los datos de
+Eso es todo. En unos 15 segundos hay un MySQL 8.4.11 con las 21 tablas, las 4 vistas y los datos de
 demostración ya cargados, porque `sql/AphofyxDB.sql` se monta en `/docker-entrypoint-initdb.d/`.
 
 **Credenciales por defecto** (en `.env`, cambiables):
@@ -1579,6 +1599,7 @@ Este proyecto documenta y modela un sistema que se confunde con un fraude. Lo qu
 | **D12** | Idioma del código | **Inglés** para modelos, campos, rutas y nombres de código; **español** para documentación, interfaz y datos. En los campos con opciones el límite está en §14.3 (§14.3) |
 | **D7** | Empresas y personas | **Se mantienen** los nombres de §6: Vitalis Gym, Instituto Andes, Clínica Sonrisa Norte, NetSur ISP y Torres del Parque, con sus contactos |
 | **D14** | Base de datos | **Docker**, con MySQL 8.4 en contenedor y la base poblada al arrancar (§14.6) |
+| **D16** | Cómo se guardan las categorías | **`ENUM`, no `VARCHAR` con `CHECK` ni números.** Por dentro MySQL guarda un byte, como un `TINYINT`; por fuera se lee y se escribe en texto. Medido sobre 300.000 filas: índice de 5,6 MB contra 7,6 MB, y la consulta filtrada baja de ~45 ms a ~40 ms. A la escala real de una campaña (10.000 deudas) la diferencia es de 0,45 ms, así que lo que decide no es la velocidad sino no perder legibilidad: guardar `3` en vez de `'paid'` obligaría a traducir en el panel, en las consultas y en los dos bordes del contrato. La codificación numérica para modelos vive en `v_deuda_features` (§12.4) |
 
 ### 17.2 Abiertas
 

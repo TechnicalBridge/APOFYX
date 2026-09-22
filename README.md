@@ -70,7 +70,16 @@ mostrar esto a alguien.**
 >
 > La bandera solo cubre las migraciones *iniciales*. Las posteriores que crean algo
 > que el DDL ya trae van envueltas en `SiFalta` (`crm/operaciones.py`): en una base
-> nueva lo encuentran y siguen; en una antigua lo crean.
+> nueva lo encuentran y siguen; en una antigua lo crean. Y al revés: las que quitan
+> algo que el DDL ya no declara —los `CHECK` que enumeraban categorías, desde que
+> son `ENUM`— van envueltas en `SiSobra`, que solo borra si está.
+>
+> **Si tu base se aleja del archivo**, `bash sql/rehacer.sh` la vuelve a crear desde
+> `sql/AphofyxDB.sql` y te devuelve los datos. Una base con meses de uso acumula lo
+> que le hicieron las migraciones —nombres de índice inventados por Django, `CHECK`
+> viejos, columnas sin su `DEFAULT`—, y aunque nada de eso rompe la aplicación, deja
+> de ser la base que describe el repositorio. El script deja un respaldo antes de
+> tocar nada.
 
 ---
 
@@ -180,7 +189,12 @@ cliente, los eventos ponen al día la cartera pero no salen a ninguna parte.
 
 ## Base de datos
 
-21 tablas y 3 vistas. **APOFYX sí guarda deudores y deudas**: es una empresa de
+21 tablas y 4 vistas. Las categorías (estados, tipos, orígenes) se guardan como **`ENUM`**:
+MySQL las representa con un byte por dentro, como si fueran números, pero se leen y se escriben
+como texto, así que una consulta dice `status = 'paid'` y no `status = 3`. El `ENUM` es la
+restricción, y por eso esas columnas no llevan además un `CHECK` repitiendo la lista.
+
+**APOFYX sí guarda deudores y deudas**: es una empresa de
 cobranza y sin la cartera no tiene nada que trabajar. Lo que **no existe** es
 ninguna tabla de pago ni de transacción; el dinero lo mueve DataBridge y acá solo
 llega el aviso.
@@ -197,6 +211,40 @@ intenciones, 117 patrones, 19 respuestas).
 Docker lo ejecuta solo la primera vez, al inicializar el volumen. Si cambias el
 script, hace falta `docker compose down -v` para que se vuelva a cargar: un
 `restart` no basta.
+
+---
+
+## Datos para un modelo
+
+Las categorías se guardan como **texto** (`'open'`, `'UF'`, `'persona'`), con un `CHECK` que
+documenta los valores posibles. Eso es lo que hace legible una consulta y lo que impide que entre
+un valor inventado. Un modelo, en cambio, necesita números, así que la codificación vive en una
+vista aparte: **`v_deuda_features`**.
+
+```bash
+python manage.py exportar_features --acreedor 76418902-7 --salida cartera.csv
+```
+
+```python
+import pandas as pd
+datos = pd.read_csv("cartera.csv")
+X = datos.drop(columns=["deuda_id", "acreedor_id", "campana_id", "estado_pagada"])
+y = datos["estado_pagada"]
+```
+
+| Qué | Cómo se codifica | Por qué |
+| --- | --- | --- |
+| Tramo de mora | **Label encoding**: `tramo_orden` 0 a 4 | Los tramos tienen orden: a más tramo, más difícil de cobrar. Un número ordenado dice algo real |
+| Estado, moneda, tipo de deudor, canales, origen de la entrega | **One-hot**: una columna 0/1 por valor | No tienen orden. Numerarlos le diría al modelo que "pagada" está el doble de lejos de "en gestión" que "en convenio", y eso no significa nada |
+| Montos, cargos, días de mora, antigüedad, eventos | Tal cual | Ya son números |
+
+**Por qué no se codifican las tablas.** Guardar `status = 3` en vez de `'paid'` haría ilegible
+cualquier consulta y el panel, obligaría a traducir en los dos bordes —el contrato de integración
+viaja en texto— y no ganaría nada: el motor no consulta más rápido por eso. Codificar en una vista
+deja un solo lugar donde esa decisión vive, y nadie la repite distinto en su script.
+
+**La mora se mide contra la fecha de corte de la entrega**, no contra hoy, para que la misma deuda
+dé siempre el mismo número aunque el modelo se entrene otro día.
 
 ---
 

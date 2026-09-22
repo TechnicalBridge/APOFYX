@@ -20,7 +20,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from .esquema import clausula_check, ddl as leer_ddl, valores_del_check
+from .esquema import clausula_check, ddl as leer_ddl, valores_del_enum
 from .forms import CreditorForm, LeadForm
 from .models import (
     PortfolioHandover, Campaign, CampaignFunnelSnapshot, Creditor, CreditorContact,
@@ -38,7 +38,7 @@ def crear_empresa(**extra):
     datos = {
         "legal_name": "Vitalis Fitness SpA",
         "trade_name": "Vitalis Gym",
-        "tax_id": "76543210-1",
+        "tax_id": "76543210-3",
         "industry": rubro,
         "status": Creditor.Status.ACTIVE,
     }
@@ -54,12 +54,12 @@ class RutFormateadoTest(TestCase):
     """El RUT se guarda normalizado y se muestra con puntos."""
 
     def test_agrega_puntos(self):
-        empresa = crear_empresa(tax_id="76543210-1")
-        self.assertEqual(empresa.rut_formateado, "76.543.210-1")
+        empresa = crear_empresa(tax_id="76543210-3")
+        self.assertEqual(empresa.rut_formateado, "76.543.210-3")
 
     def test_conserva_el_digito_verificador_k(self):
-        empresa = crear_empresa(tax_id="77812345-K")
-        self.assertEqual(empresa.rut_formateado, "77.812.345-K")
+        empresa = crear_empresa(tax_id="77812341-K")
+        self.assertEqual(empresa.rut_formateado, "77.812.341-K")
 
     def test_rut_corto(self):
         empresa = crear_empresa(tax_id="5126663-3")
@@ -482,7 +482,7 @@ class PanelDatosTest(TestCase):
 
         self.vitalis = crear_empresa(industry=self.gym)
         self.clinica = crear_empresa(
-            tax_id="76998877-5", trade_name="Clinica Sonrisa",
+            tax_id="76998877-7", trade_name="Clinica Sonrisa",
             legal_name="Dentales SpA", industry=self.salud,
             status=Creditor.Status.PAUSED,
         )
@@ -692,7 +692,7 @@ class AdminCrmTest(TestCase):
 
     def test_columnas_calculadas_del_listado_de_empresas(self):
         r = self.client.get("/admin/crm/creditor/")
-        self.assertContains(r, "76.543.210-1")   # rut_formateado
+        self.assertContains(r, "76.543.210-3")   # rut_formateado
         self.assertContains(r, "6.200")          # cartera_registros
 
     def test_empresa_sin_cartera_muestra_guion(self):
@@ -734,7 +734,7 @@ class CompanyFormTest(TestCase):
         base = {
             "trade_name": "Vitalis Gym",
             "legal_name": "Vitalis Fitness SpA",
-            "tax_id": "76.543.210-1",
+            "tax_id": "76.543.210-3",
             "industry": self.rubro.pk,
             "status": Creditor.Status.ACTIVE,
         }
@@ -742,24 +742,24 @@ class CompanyFormTest(TestCase):
         return base
 
     def test_quita_los_puntos(self):
-        form = CreditorForm(data=self.datos(tax_id="76.543.210-1"))
+        form = CreditorForm(data=self.datos(tax_id="76.543.210-3"))
         self.assertTrue(form.is_valid(), form.errors)
-        self.assertEqual(form.cleaned_data["tax_id"], "76543210-1")
+        self.assertEqual(form.cleaned_data["tax_id"], "76543210-3")
 
     def test_agrega_el_guion_si_falta(self):
-        form = CreditorForm(data=self.datos(tax_id="765432101"))
+        form = CreditorForm(data=self.datos(tax_id="765432103"))
         self.assertTrue(form.is_valid(), form.errors)
-        self.assertEqual(form.cleaned_data["tax_id"], "76543210-1")
+        self.assertEqual(form.cleaned_data["tax_id"], "76543210-3")
 
     def test_pone_la_k_en_mayuscula(self):
-        form = CreditorForm(data=self.datos(tax_id="77.812.345-k"))
+        form = CreditorForm(data=self.datos(tax_id="77.812.341-k"))
         self.assertTrue(form.is_valid(), form.errors)
-        self.assertEqual(form.cleaned_data["tax_id"], "77812345-K")
+        self.assertEqual(form.cleaned_data["tax_id"], "77812341-K")
 
     def test_las_tres_formas_del_mismo_rut_colisionan(self):
         """Es el punto de normalizar: que no entren duplicados disfrazados."""
         CreditorForm(data=self.datos()).save()
-        for variante in ("76543210-1", "76.543.210-1", "765432101"):
+        for variante in ("76543210-3", "76.543.210-3", "765432103"):
             form = CreditorForm(data=self.datos(tax_id=variante, trade_name="Clon"))
             self.assertFalse(form.is_valid(), variante)
             self.assertIn("tax_id", form.errors)
@@ -768,6 +768,15 @@ class CompanyFormTest(TestCase):
         for malo in ("123", "abc", "76543210-XY", ""):
             form = CreditorForm(data=self.datos(tax_id=malo))
             self.assertFalse(form.is_valid(), malo)
+
+    def test_rechaza_un_digito_verificador_que_no_corresponde(self):
+        """
+        76.543.210-1 tiene buen formato, pero su verificador es 3. Antes entraba:
+        se veia bien en el panel y lo rechazaba cualquier sistema que validara.
+        """
+        form = CreditorForm(data=self.datos(tax_id="76.543.210-1"))
+        self.assertFalse(form.is_valid())
+        self.assertIn("verificador", form.errors["tax_id"][0])
 
     def test_los_campos_de_ubicacion_son_opcionales(self):
         form = CreditorForm(data=self.datos())
@@ -791,7 +800,7 @@ class PanelCrudTest(TestCase):
         base = {
             "trade_name": "Nueva SpA",
             "legal_name": "Nueva Sociedad SpA",
-            "tax_id": "77812345-K",
+            "tax_id": "77812341-K",
             "industry": self.rubro.pk,
             "status": Creditor.Status.ONBOARDING,
         }
@@ -807,14 +816,14 @@ class PanelCrudTest(TestCase):
 
     def test_alta_crea_y_redirige_a_la_ficha(self):
         r = self.client.post(reverse("panel:cliente_nuevo"), self.datos_empresa())
-        nueva = Creditor.objects.get(tax_id="77812345-K")
+        nueva = Creditor.objects.get(tax_id="77812341-K")
         self.assertRedirects(r, reverse("panel:cliente_detalle", args=[nueva.pk]))
         self.assertEqual(nueva.trade_name, "Nueva SpA")
 
     def test_alta_con_rut_repetido_no_crea(self):
         antes = Creditor.objects.count()
         r = self.client.post(
-            reverse("panel:cliente_nuevo"), self.datos_empresa(tax_id="76543210-1")
+            reverse("panel:cliente_nuevo"), self.datos_empresa(tax_id="76543210-3")
         )
         self.assertEqual(r.status_code, 200)   # vuelve al formulario
         self.assertEqual(Creditor.objects.count(), antes)
@@ -824,7 +833,7 @@ class PanelCrudTest(TestCase):
     def test_edicion_guarda_los_cambios(self):
         r = self.client.post(
             reverse("panel:cliente_editar", args=[self.empresa.pk]),
-            self.datos_empresa(tax_id="76543210-1", trade_name="Vitalis Renovado"),
+            self.datos_empresa(tax_id="76543210-3", trade_name="Vitalis Renovado"),
         )
         self.assertRedirects(
             r, reverse("panel:cliente_detalle", args=[self.empresa.pk])
@@ -1165,14 +1174,16 @@ class VariablesDePlantillaTest(TestCase):
 class EsquemaYModelosCalzan(TestCase):
     """Compara las listas de valores del DDL con las choices de los modelos."""
 
-    #  CHECK del DDL -> opciones que la aplicacion puede producir.
+    #  Columna del DDL -> opciones que la aplicacion puede producir. Las
+    #  categorias se guardan como ENUM, asi que la lista de valores esta en el
+    #  tipo de la columna y no en un CHECK aparte.
     EQUIVALENCIAS = {
-        "ck_creditor_status": Creditor.Status,
-        "ck_campaign_status": Campaign.Status,
-        "ck_handover_bracket": PortfolioHandover.OverdueBracket,
-        "ck_lead_source": Lead.Source,
-        "ck_lead_status": Lead.Status,
-        "ck_lead_collection_method": Lead.CollectionMethod,
+        ("crm_creditor", "status"): Creditor.Status,
+        ("crm_campaign", "status"): Campaign.Status,
+        ("crm_portfoliohandover", "overdue_bracket"): PortfolioHandover.OverdueBracket,
+        ("crm_lead", "source"): Lead.Source,
+        ("crm_lead", "status"): Lead.Status,
+        ("crm_lead", "current_collection_method"): Lead.CollectionMethod,
     }
 
     @classmethod
@@ -1185,14 +1196,14 @@ class EsquemaYModelosCalzan(TestCase):
         self.assertIsNotNone(clausula, f"El DDL no tiene el CHECK {nombre}.")
         return clausula
 
-    def test_cada_check_ofrece_los_mismos_valores_que_su_modelo(self):
-        for nombre, opciones in self.EQUIVALENCIAS.items():
-            with self.subTest(check=nombre):
-                en_el_ddl = valores_del_check(nombre, self.ddl)
+    def test_cada_enum_ofrece_los_mismos_valores_que_su_modelo(self):
+        for (tabla, columna), opciones in self.EQUIVALENCIAS.items():
+            with self.subTest(columna=f"{tabla}.{columna}"):
+                en_el_ddl = valores_del_enum(tabla, columna, self.ddl)
                 en_el_modelo = set(opciones.values)
                 self.assertEqual(
                     en_el_ddl, en_el_modelo,
-                    f"\n{nombre} y {opciones.__qualname__} no dicen lo mismo."
+                    f"\n{tabla}.{columna} y {opciones.__qualname__} no dicen lo mismo."
                     f"\n  solo en el DDL:    {sorted(en_el_ddl - en_el_modelo)}"
                     f"\n  solo en el modelo: {sorted(en_el_modelo - en_el_ddl)}"
                     "\n  Un valor que solo esta en el modelo lo rechaza MySQL"
@@ -1211,7 +1222,7 @@ class EsquemaYModelosCalzan(TestCase):
         )
         self.assertIsNotNone(patron, "El DDL no tiene el CHECK de formato del RUT.")
         regex = re.compile(patron.group(1))
-        for valido in ("76543210-3", "77812341-K", "9876543-2"):
+        for valido in ("76543210-3", "77812341-K", "9876543-3"):
             self.assertTrue(regex.match(valido), f"{valido} deberia pasar el CHECK.")
         for invalido in ("76.543.210-3", "765432103", "76543210-XY", "abc"):
             self.assertFalse(regex.match(invalido), f"{invalido} no deberia pasar.")

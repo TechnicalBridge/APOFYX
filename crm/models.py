@@ -15,6 +15,8 @@ DataBridge, en otro repositorio (docs seccion 2.2 y 13).
 from django.core.validators import MinValueValidator
 from django.db import models
 
+from .campos import Categoria
+
 
 class Industry(models.Model):
     """Rubro atendido: gimnasios, educacion, salud, ISP, gastos comunes."""
@@ -54,13 +56,13 @@ class Creditor(models.Model):
     trade_name = models.CharField("nombre de fantasia", max_length=120)
     tax_id = models.CharField(
         "RUT", max_length=12, unique=True,
-        help_text="Normalizado, sin puntos y con guion: 76543210-1",
+        help_text="Normalizado, sin puntos y con guion: 76543210-3",
     )
     industry = models.ForeignKey(
         Industry, on_delete=models.PROTECT, related_name="creditors",
         verbose_name="rubro", db_column="industry_id",
     )
-    status = models.CharField(
+    status = Categoria(
         "estado", max_length=20, choices=Status.choices, default=Status.ONBOARDING
     )
     client_since = models.DateField("cliente desde", blank=True, null=True)
@@ -86,7 +88,7 @@ class Creditor(models.Model):
 
     @property
     def rut_formateado(self):
-        """76543210-1 -> 76.543.210-1, solo para mostrar."""
+        """76543210-3 -> 76.543.210-3, solo para mostrar."""
         if "-" not in self.tax_id:
             return self.tax_id
         cuerpo, dv = self.tax_id.rsplit("-", 1)
@@ -184,7 +186,7 @@ class PortfolioHandover(models.Model):
     period_month = models.DateField(
         "mes del periodo", help_text="Siempre el dia 1 del mes."
     )
-    overdue_bracket = models.CharField(
+    overdue_bracket = Categoria(
         "tramo de mora", max_length=20, choices=OverdueBracket.choices
     )
     debtor_count = models.PositiveIntegerField("cantidad de deudores", default=0)
@@ -230,7 +232,7 @@ class Campaign(models.Model):
     name = models.CharField("nombre", max_length=120)
     starts_on = models.DateField("inicio")
     ends_on = models.DateField("termino", blank=True, null=True)
-    status = models.CharField(
+    status = Categoria(
         "estado", max_length=20, choices=Status.choices, default=Status.DRAFT
     )
     channels = models.JSONField("canales", default=list)
@@ -288,9 +290,15 @@ class CampaignFunnelSnapshot(models.Model):
     Se llama "foto" y no "metrica" porque es eso: el estado acumulado del
     embudo completo en un momento, no un indicador suelto.
 
-    Llega hasta los clics y se acaba: APOFYX no puede medir mas alla, porque el
-    pago ocurre fuera de su producto (docs seccion 11.3). La ausencia de una
-    columna de pagos es deliberada.
+    Llegaba hasta los clics y se acababa: el pago ocurria fuera del producto
+    (docs seccion 11.3), y la ausencia de columnas de pago era deliberada.
+    Desde la integracion con DataBridge si se puede medir: el evento
+    campana.avance trae los pagos y lo recuperado, y esas columnas se llenan
+    solas. Las de mensajeria (entregados, abiertos, respuestas, bajas) siguen
+    dependiendo del proveedor de mensajes y hoy no se miden.
+
+    `link_clicks` ya no cuenta clics: con codigo de acceso no hay enlace que
+    tocar, y lo que cuenta son los INGRESOS AL PORTAL.
     """
 
     campaign = models.ForeignKey(
@@ -302,10 +310,16 @@ class CampaignFunnelSnapshot(models.Model):
     messages_delivered = models.PositiveIntegerField("mensajes entregados", default=0)
     messages_opened = models.PositiveIntegerField("mensajes abiertos", default=0)
     replies_received = models.PositiveIntegerField("respuestas recibidas", default=0)
-    link_clicks = models.PositiveIntegerField("clics en el enlace", default=0)
+    link_clicks = models.PositiveIntegerField("ingresos al portal", default=0)
     fraud_reports = models.PositiveIntegerField("reportes de fraude", default=0)
     optout_requests = models.PositiveIntegerField("solicitudes de baja", default=0)
     debt_disputes = models.PositiveIntegerField("deudas disputadas", default=0)
+    payments = models.PositiveIntegerField("pagos", default=0)
+    recovered_clp = models.PositiveBigIntegerField("recuperado en pesos", default=0)
+    #  Las UF no se suman con los pesos: se informan aparte.
+    recovered_uf = models.DecimalField(
+        "recuperado en UF", max_digits=12, decimal_places=2, default=0
+    )
     created_at = models.DateTimeField("creado", auto_now_add=True)
 
     class Meta:
@@ -366,7 +380,7 @@ class Lead(models.Model):
     estimated_overdue_clp = models.PositiveBigIntegerField(
         "monto moroso estimado (CLP)", blank=True, null=True
     )
-    current_collection_method = models.CharField(
+    current_collection_method = Categoria(
         "como cobran hoy", max_length=20,
         choices=CollectionMethod.choices, blank=True, null=True,
     )
@@ -374,10 +388,10 @@ class Lead(models.Model):
         Industry, on_delete=models.SET_NULL, related_name="leads",
         verbose_name="rubro", db_column="industry_id", blank=True, null=True,
     )
-    source = models.CharField(
+    source = Categoria(
         "origen", max_length=20, choices=Source.choices, default=Source.FORM
     )
-    status = models.CharField(
+    status = Categoria(
         "estado", max_length=20, choices=Status.choices, default=Status.NEW
     )
     inquiry_message = models.TextField("mensaje de la consulta", blank=True, null=True)

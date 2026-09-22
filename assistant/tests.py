@@ -14,6 +14,7 @@ from unittest.mock import patch
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
+from crm.esquema import clausula_check, valores_del_enum
 from crm.models import Lead
 from . import engine
 from .models import Conversation, Intent, IntentPattern, IntentResponse, Message
@@ -607,3 +608,35 @@ class AdminAsistenteTest(TestCase):
         r = self.client.get(f"/admin/assistant/intent/{self.intencion.pk}/change/")
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "hola")
+
+
+class ElDdlYLosModelosDicenLoMismo(TestCase):
+    """
+    La misma guardia que en crm y cartera: las categorias del asistente se
+    guardan como ENUM, y el ENUM tiene que ofrecer exactamente lo que el
+    modelo puede producir.
+    """
+
+    EQUIVALENCIAS = {
+        ("assistant_intent", "audience"): Intent.Audience,
+        ("assistant_conversation", "inferred_audience"): Intent.Audience,
+        ("assistant_message", "speaker"): Message.Speaker,
+        ("assistant_message", "answer_engine"): Message.AnswerEngine,
+    }
+
+    def test_cada_enum_ofrece_los_mismos_valores_que_su_modelo(self):
+        for (tabla, columna), opciones in self.EQUIVALENCIAS.items():
+            with self.subTest(columna=f"{tabla}.{columna}"):
+                en_el_ddl = valores_del_enum(tabla, columna)
+                self.assertIsNotNone(en_el_ddl, f"{tabla}.{columna} no es un ENUM en el DDL.")
+                self.assertEqual(en_el_ddl, set(opciones.values))
+
+    def test_el_check_del_motor_ya_no_repite_los_valores(self):
+        """
+        Esa regla dice quien puede tener motor, no cuales son. Los valores los
+        declara el ENUM, y decirlos dos veces es como terminan separandose.
+        """
+        regla = clausula_check("ck_message_engine")
+        self.assertIsNotNone(regla)
+        self.assertNotIn("'rules'", regla)
+        self.assertIn("speaker", regla)

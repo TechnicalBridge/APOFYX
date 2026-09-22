@@ -1,10 +1,9 @@
 """Formularios del sitio publico y del panel."""
 
-import re
-
 from django import forms
 
 from .models import Creditor, CreditorContact, Industry, Lead
+from .rut import es_valido, normalizar, tiene_formato
 
 
 class LeadForm(forms.ModelForm):
@@ -61,7 +60,9 @@ class CreditorForm(forms.ModelForm):
 
     El RUT se normaliza al guardar: sin puntos y con guion. Asi la restriccion
     de unicidad funciona de verdad; si se guardara como lo escribe cada
-    persona, '76.543.210-1' y '76543210-1' serian dos empresas distintas.
+    persona, '76.543.210-3' y '76543210-3' serian dos empresas distintas.
+    Y se comprueba el digito verificador: un RUT mal escrito se ve bien en el
+    panel, pero lo rechaza cualquier sistema con el que la empresa se integre.
     """
 
     class Meta:
@@ -73,7 +74,7 @@ class CreditorForm(forms.ModelForm):
         widgets = {
             "trade_name": forms.TextInput(attrs={"placeholder": "Como se le conoce"}),
             "legal_name": forms.TextInput(attrs={"placeholder": "Razon social completa"}),
-            "tax_id": forms.TextInput(attrs={"placeholder": "76.543.210-1"}),
+            "tax_id": forms.TextInput(attrs={"placeholder": "76.543.210-3"}),
             "client_since": forms.DateInput(attrs={"type": "date"}),
             "website": forms.URLInput(attrs={"placeholder": "https://"}),
             "internal_notes": forms.Textarea(attrs={"rows": 3}),
@@ -87,16 +88,15 @@ class CreditorForm(forms.ModelForm):
         _aplicar_clases(self.fields)
 
     def clean_tax_id(self):
-        """Deja el RUT en la forma canonica: sin puntos, con guion, K mayuscula."""
-        crudo = (self.cleaned_data["tax_id"] or "").strip().upper()
-        limpio = crudo.replace(".", "").replace(" ", "")
-
-        if "-" not in limpio and len(limpio) > 1:
-            limpio = f"{limpio[:-1]}-{limpio[-1]}"
-
-        if not re.match(r"^\d{7,8}-[\dK]$", limpio):
+        """Deja el RUT en la forma canonica (sin puntos, con guion, K mayuscula) y valido."""
+        limpio = normalizar(self.cleaned_data["tax_id"])
+        if not tiene_formato(limpio):
             raise forms.ValidationError(
-                "Formato no valido. Se espera algo como 76.543.210-1 o 76543210-1."
+                "Formato no valido. Se espera algo como 76.543.210-3 o 76543210-3."
+            )
+        if not es_valido(limpio):
+            raise forms.ValidationError(
+                "El digito verificador no corresponde a ese RUT. Revisalo."
             )
         return limpio
 
