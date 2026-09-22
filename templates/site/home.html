@@ -1,0 +1,456 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block contenido %}
+
+{# ====================== Portada ====================== #}
+<section class="ap-portada">
+    <div class="container">
+        <div class="row g-5 align-items-center">
+            <div class="col-lg-6 revelar">
+                <p class="ap-rotulo">Cobranza digital de carteras masivas</p>
+
+                <h1 class="ap-h1 mb-4">
+                    Su cartera morosa no esta perdida.<br>
+                    Esta sin gestionar.
+                </h1>
+
+                <p class="ap-guia mb-4">
+                    Gestionamos su cartera morosa completa por canales digitales. Sin call
+                    center, sin contratar gente y sin tocar los sistemas que ya usa.
+                </p>
+
+                <div class="d-flex flex-wrap gap-3">
+                    <a class="btn btn-ap btn-lg" href="#contacto">Hablemos de su cartera</a>
+                    <a class="btn btn-ap-linea btn-lg" href="#proceso">Ver el proceso</a>
+                </div>
+
+                {# Las dos primeras cifras salen de MySQL, no del HTML. #}
+                <div class="ap-datos">
+                    <div class="ap-dato">
+                        <span class="ap-dato__valor" data-contador="{{ cifras.cartera }}">{{ cifras.cartera }}</span>
+                        <span class="ap-dato__texto">Deudores en gestion este periodo</span>
+                    </div>
+                    <div class="ap-dato">
+                        <span class="ap-dato__valor">{{ cifras.tasa_entrega }}%</span>
+                        <span class="ap-dato__texto">De los mensajes llegan a destino</span>
+                    </div>
+                    <div class="ap-dato">
+                        <span class="ap-dato__valor">5</span>
+                        <span class="ap-dato__texto">Dias habiles de puesta en marcha</span>
+                    </div>
+                </div>
+            </div>
+
+            {# El producto de APOFYX es la operacion: una campana corriendo sobre
+               la cartera. Aca no hay conversacion con el deudor, porque eso no
+               lo hace APOFYX. #}
+            <div class="col-lg-5 offset-lg-1 revelar">
+                <p class="ap-micro mb-3">Campana en curso, vista desde su panel</p>
+
+                <div class="ap-consola" id="consola">
+                    <div class="ap-consola__barra">
+                        <span class="ap-consola__titulo">Vitalis Gym &middot; Mora temprana</span>
+                        <span class="ap-consola__estado">En curso</span>
+                    </div>
+
+                    <div class="ap-consola__cuerpo">
+                        <div class="ap-avance">
+                            <div class="ap-avance__fila">
+                                <span>Enviados</span>
+                                <span class="ap-avance__cifra" data-progreso="16368">0</span>
+                            </div>
+                            <div class="ap-barra"><i style="--pct: 100%"></i></div>
+                        </div>
+                        <div class="ap-avance">
+                            <div class="ap-avance__fila">
+                                <span>Entregados</span>
+                                <span class="ap-avance__cifra" data-progreso="14994">0</span>
+                            </div>
+                            <div class="ap-barra"><i style="--pct: 91.6%"></i></div>
+                        </div>
+                        <div class="ap-avance">
+                            <div class="ap-avance__fila">
+                                <span>Abiertos</span>
+                                <span class="ap-avance__cifra" data-progreso="4003">0</span>
+                            </div>
+                            <div class="ap-barra"><i style="--pct: 26.7%"></i></div>
+                        </div>
+                        <div class="ap-avance">
+                            <div class="ap-avance__fila">
+                                <span>Clics en el enlace</span>
+                                <span class="ap-avance__cifra" data-progreso="473">0</span>
+                            </div>
+                            <div class="ap-barra"><i style="--pct: 11.8%"></i></div>
+                        </div>
+                    </div>
+
+                    <div class="ap-consola__pie">
+                        <span>WhatsApp &middot; SMS &middot; Correo</span>
+                        <span>3 toques &middot; dias 1, 11 y 25</span>
+                    </div>
+                </div>
+
+                <p class="ap-micro mt-3 mb-0">
+                    Datos de una campana de ejemplo. El detalle por deudor queda
+                    registrado y se puede exportar.
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+{# ====================== Clientes ====================== #}
+<section class="py-4 py-lg-5" style="border-top: 1px solid var(--ap-linea-tenue)">
+    <div class="container revelar">
+        <div class="d-flex flex-column flex-lg-row gap-3 gap-lg-5 align-items-lg-center">
+            <p class="ap-micro mb-0 flex-shrink-0">Gestionan su cartera con nosotros</p>
+            <div class="ap-clientes">
+                {% for empresa in clientes %}
+                <span class="ap-cliente">{{ empresa.trade_name }}</span>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</section>
+
+
+{# ====================== El problema ====================== #}
+<section class="ap-seccion">
+    <div class="container">
+        <div class="row g-5">
+            <div class="col-lg-4">
+                <div class="ap-fijo revelar">
+                    <p class="ap-rotulo">El problema</p>
+                    <h2 class="ap-h2 mb-3">La cartera chica no se gestiona mal. No se gestiona.</h2>
+                    <p class="ap-nota mb-0">
+                        Es lo que nos cuentan casi todas las empresas antes de trabajar con
+                        nosotros.
+                    </p>
+                </div>
+            </div>
+
+            <div class="col-lg-7 offset-lg-1">
+                <div class="ap-lista revelar revelar-grupo">
+                    <article>
+                        <h3 class="ap-h3 mb-2">Se castiga sin haberla tocado</h3>
+                        <p class="ap-nota mb-0">
+                            Llamar cuesta mas que la deuda, asi que a fin de ano se da por
+                            perdida entera. No es una decision: es lo unico que queda.
+                        </p>
+                    </article>
+                    <article>
+                        <h3 class="ap-h3 mb-2">Nadie sabe en que quedo cada caso</h3>
+                        <p class="ap-nota mb-0">
+                            Una planilla, anotaciones a mano y comprobantes que llegan por
+                            WhatsApp al telefono de alguien. Si esa persona se va, se va todo.
+                        </p>
+                    </article>
+                    <article>
+                        <h3 class="ap-h3 mb-2">La cobranza tradicional no la quiere</h3>
+                        <p class="ap-nota mb-0">
+                            Trabajan por gestion realizada. Con tickets bajos el numero no
+                            da, y terminan seleccionando solo los montos grandes.
+                        </p>
+                    </article>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+{# ====================== El proceso ====================== #}
+<section class="ap-seccion" id="proceso">
+    <div class="container">
+        <div class="row g-5">
+            <div class="col-lg-4">
+                <div class="ap-fijo revelar">
+                    <p class="ap-rotulo">El proceso</p>
+                    <h2 class="ap-h2 mb-3">Cinco pasos, sin una sola llamada</h2>
+                    <p class="ap-nota mb-0">
+                        Desde que nos entrega la cartera hasta que ve el rendimiento en su
+                        panel. Cinco dias habiles.
+                    </p>
+                </div>
+            </div>
+
+            <div class="col-lg-7 offset-lg-1">
+                <div class="ap-lista revelar revelar-grupo">
+                    {% for paso in pasos %}
+                    <article class="d-flex gap-4">
+                        <span class="ap-indice flex-shrink-0">{{ paso.numero }}</span>
+                        <div>
+                            <h3 class="ap-h3 mb-2">{{ paso.titulo }}</h3>
+                            <p class="ap-nota mb-0">{{ paso.texto }}</p>
+                        </div>
+                    </article>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+{# ====================== Rubros ====================== #}
+<section class="ap-seccion" id="rubros">
+    <div class="container">
+        <div class="mb-5 revelar" style="max-width: 46ch">
+            <p class="ap-rotulo">A quienes servimos</p>
+            <h2 class="ap-h2 mb-0">Empresas con muchos morosos de monto bajo</h2>
+        </div>
+
+        <div class="row ap-celdas revelar revelar-grupo">
+            {% for rubro in rubros %}
+            <div class="col-md-6 ap-celda">
+                <h3 class="ap-h3 mb-2">{{ rubro.name }}</h3>
+                <p class="ap-nota mb-0">{{ rubro.description }}</p>
+            </div>
+            {% endfor %}
+        </div>
+
+        <p class="ap-micro mt-4 mb-0">
+            El requisito practico es tener al menos unos 200 registros en mora. Bajo ese
+            volumen, la automatizacion no se justifica frente a una gestion manual.
+        </p>
+    </div>
+</section>
+
+
+{# ====================== Testimonio ====================== #}
+<section class="ap-seccion">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-9 revelar">
+                <figure class="mb-0">
+                    <blockquote class="ap-cita mb-4">
+                        Teniamos catorce locales y una planilla. Nadie llamaba por una cuota
+                        de $39.000 porque no valia la pena. El primer mes contactamos mas
+                        deudores que en todo el ano anterior.
+                    </blockquote>
+                    <figcaption class="ap-micro">
+                        <strong style="color: var(--ap-tinta); font-match_weight: 600">Paulina Cortes</strong>
+                        &nbsp;&middot;&nbsp; Gerenta de Administracion y Finanzas, Vitalis Gym
+                    </figcaption>
+                </figure>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+{# ====================== Cumplimiento ====================== #}
+<section class="ap-seccion">
+    <div class="container">
+        <div class="row g-5">
+            <div class="col-lg-4">
+                <div class="ap-fijo revelar">
+                    <p class="ap-rotulo">Como operamos</p>
+                    <h2 class="ap-h2 mb-3">Cobrar tiene reglas, y las seguimos</h2>
+                    <p class="ap-nota mb-0">
+                        Somos mandatarios de cobranza extrajudicial y encargados de
+                        tratamiento de datos. Eso implica limites concretos, no una
+                        declaracion de buenas intenciones.
+                    </p>
+                </div>
+            </div>
+
+            <div class="col-lg-7 offset-lg-1">
+                <div class="row g-4 g-lg-5 revelar revelar-grupo">
+                    <div class="col-sm-6">
+                        <div class="ap-norma">
+                            <p class="ap-norma__ley">Ley 19.496</p>
+                            <p class="ap-nota mb-0">
+                                Respetamos las ventanas horarias de contacto y no escribimos en
+                                domingos ni festivos.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="ap-norma">
+                            <p class="ap-norma__ley">Nunca a terceros</p>
+                            <p class="ap-nota mb-0">
+                                No contactamos familiares, vecinos ni al empleador del deudor.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="ap-norma">
+                            <p class="ap-norma__ley">Derecho a oponerse</p>
+                            <p class="ap-nota mb-0">
+                                Toda solicitud de no ser contactado se registra y se cumple de
+                                inmediato.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="ap-norma">
+                            <p class="ap-norma__ley">Sin apremios</p>
+                            <p class="ap-nota mb-0">
+                                Ningun mensaje aparenta ser judicial ni amenaza con acciones que
+                                no corresponden.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+{# ====================== Preguntas ====================== #}
+<section class="ap-seccion">
+    <div class="container">
+        <div class="row g-5">
+            <div class="col-lg-4">
+                <div class="ap-fijo revelar">
+                    <p class="ap-rotulo">Preguntas</p>
+                    <h2 class="ap-h2 mb-0">Lo que siempre nos preguntan</h2>
+                </div>
+            </div>
+
+            <div class="col-lg-7 offset-lg-1 revelar">
+                <div class="accordion" id="preguntas">
+                    <div class="accordion-item">
+                        <h3 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#p1">
+                                ¿Compran la cartera?
+                            </button>
+                        </h3>
+                        <div id="p1" class="accordion-collapse collapse" data-bs-parent="#preguntas">
+                            <div class="accordion-body">
+                                No. La deuda sigue siendo suya en todo momento; nosotros solo
+                                gestionamos el contacto por encargo suyo, mediante un mandato de
+                                cobranza extrajudicial.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <h3 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#p2">
+                                ¿Que necesito para partir?
+                            </button>
+                        </h3>
+                        <div id="p2" class="accordion-collapse collapse" data-bs-parent="#preguntas">
+                            <div class="accordion-body">
+                                Un archivo CSV con RUT, nombre, telefono, correo, monto, fecha de
+                                vencimiento y numero de documento. Si prefiere conectar su sistema
+                                tenemos API, pero no es requisito para empezar.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <h3 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#p3">
+                                ¿Cuanto cuesta?
+                            </button>
+                        </h3>
+                        <div id="p3" class="accordion-collapse collapse" data-bs-parent="#preguntas">
+                            <div class="accordion-body">
+                                No publicamos tarifas porque dependen del tamano y la antiguedad
+                                de su cartera, y preferimos darle un numero real y no uno
+                                inventado. Escribanos y le enviamos una estimacion concreta.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <h3 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#p4">
+                                ¿El pago pasa por ustedes?
+                            </button>
+                        </h3>
+                        <div id="p4" class="accordion-collapse collapse" data-bs-parent="#preguntas">
+                            <div class="accordion-body">
+                                No. APOFYX no recibe dinero ni procesa pagos: el deudor paga por
+                                el medio que usted defina, directo a usted. Nosotros nos
+                                encargamos del contacto y del seguimiento.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <h3 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#p5">
+                                ¿Y si un cliente pide que no lo contacten?
+                            </button>
+                        </h3>
+                        <div id="p5" class="accordion-collapse collapse" data-bs-parent="#preguntas">
+                            <div class="accordion-body">
+                                Se registra y se detiene el contacto de inmediato, y usted lo ve
+                                en su panel. Es un derecho del deudor: para nosotros es una regla
+                                dura, no una opcion configurable.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+
+{# ====================== Contacto ====================== #}
+<section class="ap-seccion" id="contacto">
+    <div class="container">
+        <div class="row g-5">
+            <div class="col-lg-4">
+                <div class="ap-fijo revelar">
+                    <p class="ap-rotulo">Contacto</p>
+                    <h2 class="ap-h2 mb-3">Cuentenos de su cartera</h2>
+                    <p class="ap-nota mb-4">
+                        Mientras mas nos cuente, mas concreta sera la respuesta. Le
+                        escribimos dentro de un dia habil con una estimacion para su caso.
+                    </p>
+                    <p class="ap-micro mb-0">
+                        O directo a
+                        <a href="mailto:comercial@apofyx.cl" style="color: var(--ap-oro-claro)">comercial@apofyx.cl</a>
+                    </p>
+                </div>
+            </div>
+
+            <div class="col-lg-7 offset-lg-1 revelar">
+                {% if messages %}
+                    {% for mensaje in messages %}
+                    <p class="ap-error mb-4">{{ mensaje }}</p>
+                    {% endfor %}
+                {% endif %}
+
+                <form method="post" action="{% url 'site:contacto' %}" novalidate>
+                    {% csrf_token %}
+                    <div class="row g-4">
+                        {% for campo in form %}
+                        <div class="{% if campo.name == 'inquiry_message' or campo.name == 'current_collection_method' %}col-12{% else %}col-md-6{% endif %}">
+                            <label class="form-label" for="{{ campo.id_for_label }}">
+                                {{ campo.label }}{% if campo.field.required %} <span style="color: var(--ap-oro)">*</span>{% endif %}
+                            </label>
+                            {{ campo }}
+                            {% if campo.help_text %}
+                            <div class="form-text mt-1">{{ campo.help_text }}</div>
+                            {% endif %}
+                            {% for error in campo.errors %}
+                            <div class="ap-error mt-1">{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        {% endfor %}
+
+                        <div class="col-12 pt-3">
+                            <button class="btn btn-ap btn-lg" type="submit">Enviar solicitud</button>
+                            <p class="form-text mt-3 mb-0">
+                                Al enviar acepta que lo contactemos por este medio. No compartimos
+                                sus datos con terceros.
+                            </p>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+
+{% endblock %}

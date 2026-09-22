@@ -1,0 +1,92 @@
+# =============================================================================
+#  APOFYX — entorno de desarrollo
+# =============================================================================
+#  Uso habitual (solo la base de datos):
+#      docker compose up -d
+#      docker compose logs -f db          # ver el arranque
+#      docker compose down                # detener, conservando los datos
+#      docker compose down -v             # detener Y BORRAR los datos
+#
+#  Cuando exista el proyecto Django, para levantar tambien la app:
+#      docker compose --profile app up -d --build
+#
+#  La base queda expuesta en el puerto 3307 del host, NO en el 3306, para que
+#  no choque con el MySQL 8.4 que ya esta instalado en el equipo.
+#  Conexion desde MySQL Workbench:  127.0.0.1 : 3307
+# =============================================================================
+
+services:
+
+  db:
+    image: mysql:8.4
+    container_name: apofyx-db
+    restart: unless-stopped
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE:      ${MYSQL_DATABASE:-apofyx}
+      MYSQL_USER:          ${MYSQL_USER:-apofyx_app}
+      MYSQL_PASSWORD:      ${MYSQL_PASSWORD:-apofyx_pass}
+
+    # utf8mb4 explicito: el esquema y los datos llevan acentos y enies.
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+
+    ports:
+      - "${MYSQL_PORT:-3307}:3306"
+
+    volumes:
+      # Datos persistentes. Sobreviven a "docker compose down".
+      - apofyx_db_data:/var/lib/mysql
+      # El script se ejecuta SOLO la primera vez, cuando el volumen esta vacio.
+      # Para volver a cargarlo hay que hacer "docker compose down -v".
+      - ./sql/AphofyxDB.sql:/docker-entrypoint-initdb.d/01-AphofyxDB.sql:ro
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1",
+             "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpass}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  # ---------------------------------------------------------------------------
+  #  Aplicacion Django.
+  #  Esta bajo el perfil "app" a proposito: hoy el proyecto Django todavia no
+  #  existe, asi que "docker compose up" levanta solo la base. Cuando este el
+  #  manage.py, se activa con:   docker compose --profile app up -d --build
+  # ---------------------------------------------------------------------------
+  web:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: apofyx-web
+    restart: unless-stopped
+
+    environment:
+      # Dentro de la red de compose el host de la base es "db" y el puerto 3306,
+      # no el 3307 que se publica hacia afuera.
+      DB_HOST:     db
+      DB_PORT:     3306
+      DB_NAME:     ${MYSQL_DATABASE:-apofyx}
+      DB_USER:     ${MYSQL_USER:-apofyx_app}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-apofyx_pass}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-inseguro-cambiar}
+      DJANGO_DEBUG:      ${DJANGO_DEBUG:-1}
+      GEMINI_API_KEY:    ${GEMINI_API_KEY:-}
+
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+
+    volumes:
+      # Codigo montado en vivo: editar en el host recarga sin reconstruir.
+      - .:/app
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  apofyx_db_data:

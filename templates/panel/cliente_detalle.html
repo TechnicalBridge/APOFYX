@@ -1,0 +1,148 @@
+{% extends "panel/base_panel.html" %}
+
+{% block titulo_panel %}{{ empresa.trade_name }}{% endblock %}
+{% block rotulo %}Clientes / ficha{% endblock %}
+{% block encabezado %}{{ empresa.trade_name }}{% endblock %}
+{% block cabecera_extra %}
+<div class="d-flex flex-wrap gap-2 justify-content-end align-items-center">
+    <form method="post" action="{% url 'panel:cliente_estado' empresa.pk %}" class="d-flex gap-2">
+        {% csrf_token %}
+        <label class="visually-hidden" for="estado">Estado</label>
+        <select class="form-select" id="estado" name="estado" style="min-width: 11rem">
+            {% for valor, etiqueta in estados %}
+            <option value="{{ valor }}" {% if valor == empresa.status %}selected{% endif %}>{{ etiqueta }}</option>
+            {% endfor %}
+        </select>
+        <button class="btn btn-ap-linea" type="submit">Cambiar</button>
+    </form>
+    <a class="btn btn-ap" href="{% url 'panel:cliente_editar' empresa.pk %}">Editar datos</a>
+</div>
+{% endblock %}
+
+{% block panel %}
+
+<p class="mb-4"><a class="ap-micro" href="{% url 'panel:clientes' %}">&larr; Volver al listado</a></p>
+
+<div class="row g-5">
+    <div class="col-lg-4">
+        <h2 class="ap-h3 mb-3">Datos</h2>
+        <table class="ap-tabla ap-tabla--ficha mb-4">
+            <tbody>
+                <tr><th>Razón social</th><td>{{ empresa.legal_name }}</td></tr>
+                <tr><th>RUT</th><td class="ap-mono">{{ empresa.rut_formateado }}</td></tr>
+                <tr><th>Rubro</th><td>{{ empresa.industry.name }}</td></tr>
+                <tr><th>Comuna</th><td>{{ empresa.commune|default:"—" }}{% if empresa.region %}, {{ empresa.region }}{% endif %}</td></tr>
+                <tr><th>Alta</th><td>{{ empresa.client_since|date:"d/m/Y"|default:"—" }}</td></tr>
+                <tr>
+                    <th>Sitio</th>
+                    <td>
+                        {% if empresa.website %}
+                        <a href="{{ empresa.website }}" rel="noopener" target="_blank">{{ empresa.website }}</a>
+                        {% else %}—{% endif %}
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2 class="ap-h3 mb-3">Contactos</h2>
+        <div class="ap-lista-compacta mb-4">
+            {% for contacto in empresa.contacts.all %}
+            <div class="d-flex justify-content-between gap-3">
+                <div>
+                    <strong>{{ contacto.full_name }}</strong>
+                    {% if contacto.is_primary %}<span class="ap-marca-principal">principal</span>{% endif %}
+                    <span class="ap-micro d-block">{{ contacto.job_title|default:"—" }}</span>
+                    <span class="ap-micro d-block">
+                        <a href="mailto:{{ contacto.email }}">{{ contacto.email }}</a>
+                        {% if contacto.phone %} · {{ contacto.phone }}{% endif %}
+                    </span>
+                </div>
+                <a class="ap-micro flex-shrink-0"
+                   href="{% url 'panel:contacto_editar' empresa.pk contacto.pk %}">Editar</a>
+            </div>
+            {% empty %}
+            <p class="ap-micro mb-0">Sin contactos cargados.</p>
+            {% endfor %}
+        </div>
+
+        <a class="btn btn-ap-linea" href="{% url 'panel:contacto_nuevo' empresa.pk %}">
+            Agregar contacto
+        </a>
+    </div>
+
+    <div class="col-lg-8">
+        <h2 class="ap-h3 mb-3">
+            Cartera entregada
+            {% if empresa.cartera.periodo %}
+            <span class="ap-micro">· {{ empresa.cartera.periodo|date:"F Y" }}</span>
+            {% endif %}
+        </h2>
+
+        {% if empresa.cartera.registros %}
+        <div class="ap-kpis ap-kpis--dos mb-4">
+            <div class="ap-kpi">
+                <span class="ap-kpi__valor">{{ empresa.cartera.registros }}</span>
+                <span class="ap-kpi__texto">Deudores en gestión</span>
+            </div>
+            <div class="ap-kpi">
+                <span class="ap-kpi__valor">${{ empresa.cartera.ticket|floatformat:0 }}</span>
+                <span class="ap-kpi__texto">Ticket medio ponderado</span>
+            </div>
+        </div>
+
+        <table class="ap-tabla mb-2">
+            <thead>
+                <tr><th>Tramo de mora</th><th class="ap-num">Registros</th><th class="ap-num">Ticket medio</th></tr>
+            </thead>
+            <tbody>
+                {% for tramo in empresa.cartera.tramos %}
+                <tr>
+                    <td>{{ tramo.get_overdue_bracket_display }}</td>
+                    <td class="ap-num">{{ tramo.debtor_count }}</td>
+                    <td class="ap-num">${{ tramo.average_debt_clp|floatformat:0 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <p class="ap-micro mb-4">
+            El ticket medio de arriba está ponderado por cantidad de registros, no
+            es el promedio simple de los tres tramos.
+        </p>
+        {% else %}
+        <p class="ap-micro mb-4">Esta empresa todavía no ha entregado cartera.</p>
+        {% endif %}
+
+        <h2 class="ap-h3 mb-3">Campañas</h2>
+        {% for fila in campanas %}
+        <div class="ap-campana">
+            <div class="ap-campana__cabecera">
+                <div>
+                    <strong>{{ fila.campana.name }}</strong>
+                    <span class="ap-micro d-block">
+                        {{ fila.campana.starts_on|date:"d/m/Y" }}
+                        {% if fila.campana.ends_on %}— {{ fila.campana.ends_on|date:"d/m/Y" }}{% endif %}
+                        · {{ fila.campana.contact_attempts }} toques
+                    </span>
+                </div>
+                <span class="ap-estado ap-estado--{{ fila.campana.status }}">{{ fila.campana.get_status_display }}</span>
+            </div>
+
+            {% if fila.embudo %}
+            <div class="ap-embudo">
+                <div><span class="ap-embudo__rotulo">Enviados</span><span class="ap-embudo__valor">{{ fila.embudo.enviados }}</span></div>
+                <div><span class="ap-embudo__rotulo">Entregados</span><span class="ap-embudo__valor">{{ fila.embudo.entregados }}</span><span class="ap-embudo__pct">{{ fila.embudo.tasa_entrega }}%</span></div>
+                <div><span class="ap-embudo__rotulo">Abiertos</span><span class="ap-embudo__valor">{{ fila.embudo.abiertos }}</span><span class="ap-embudo__pct">{{ fila.embudo.tasa_apertura }}%</span></div>
+                <div><span class="ap-embudo__rotulo">Clics</span><span class="ap-embudo__valor">{{ fila.embudo.clics }}</span><span class="ap-embudo__pct">{{ fila.embudo.tasa_clic }}%</span></div>
+                <div><span class="ap-embudo__rotulo">Fraude</span><span class="ap-embudo__valor ap-num--alerta">{{ fila.embudo.fraudes }}</span></div>
+            </div>
+            {% else %}
+            <p class="ap-micro mb-0">Sin mediciones cargadas.</p>
+            {% endif %}
+        </div>
+        {% empty %}
+        <p class="ap-micro">Esta empresa no tiene campañas.</p>
+        {% endfor %}
+    </div>
+</div>
+
+{% endblock %}

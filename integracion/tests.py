@@ -1,0 +1,562 @@
+"""
+Pruebas de la recepcion de cartera.
+
+La prueba que importa es la primera: APOFYX tiene que aceptar, sin tocarlo, el
+archivo que Patrimonio Inmuebles genera. Si esa pasa, los dos sistemas hablan
+el mismo idioma; si falla, da lo mismo que todo lo demas este bien.
+
+El archivo vive en fixtures/ como copia del ejemplo publicado del contrato
+(TB_web/docs/integracion/ejemplos/). La copia es a proposito: este repositorio
+tiene que poder probarse solo. `LaCopiaDelContratoEstaAlDia` avisa si el
+original cambio, cuando el otro repositorio esta al lado.
+"""
+
+import copy
+import json
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+
+from django.conf import settings as ajustes
+from django.test import TestCase
+from django.urls import reverse
+
+from cartera.models import Batch, Debt, DebtCharge, Debtor
+from crm.models import Creditor, Industry
+
+from .intake import CarteraInvalida, recibir_cartera
+from .models import ApiKey
+
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "cartera-v1-patrimonio.json"
+RUT_PATRIMONIO = "76418902-7"
+
+
+def cartera_de_ejemplo():
+    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def crear_acreedor(tax_id=RUT_PATRIMONIO, nombre="Patrimonio Inmuebles"):
+    rubro, _ = Industry.objects.get_or_create(
+        slug="arriendos", defaults={"name": "Corretaje y arriendos"}
+    )
+    return Creditor.objects.create(
+        legal_name=f"{nombre} SpA", trade_name=nombre, tax_id=tax_id,
+        industry=rubro, status=Creditor.Status.ACTIVE,
+    )
+
+
+def lote_de_agosto():
+    """
+    La entrega del mes anterior.
+
+    Existe para que el retiro de septiembre tenga contra que compararse: solo
+    se puede retirar una deuda que antes se entrego.
+    """
+    return {
+        "version": "1.0",
+        "lote": {
+            "id_externo": "PAT-2026-08-18-01",
+            "fecha_corte": "2026-08-18",
+            "acreedor": {"rut": RUT_PATRIMONIO},
+        },
+        "deudas": [{
+            "id_externo": "CTR-2025-022",
+            "deudor": {
+                "rut": "15227640-0", "tipo": "persona", "nombre": "Tomás Fuentes Leiva",
+                "correo": "tomas.fuentes@correo.cl", "telefono": "+56955512340",
+            },
+            "moneda": "CLP",
+            "concepto": "Arriendo mensual",
+            "cargos": [
+                {"concepto": "Arriendo julio", "periodo": "2026-07",
+                 "monto": 680000, "fecha_vencimiento": "2026-07-05"},
+                {"concepto": "Arriendo agosto", "periodo": "2026-08",
+                 "monto": 680000, "fecha_vencimiento": "2026-08-05"},
+            ],
+        }],
+    }
+
+
+class RecibeLaCarteraDePatrimonio(TestCase):
+    """El caso completo, con el archivo real."""
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+
+    def test_acepta_el_archivo_tal_como_lo_genera_patrimonio(self):
+        recibir_cartera(self.acreedor, lote_de_agosto())
+        respuesta = recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+        self.assertEqual(respuesta["recibidas"], 4)
+        self.assertEqual(respuesta["aceptadas"], 4, respuesta["resultados"])
+        self.assertEqual(respuesta["rechazadas"], 0)
+        self.assertEqual(respuesta["campos_ignorados"], [])
+
+        por_id = {r["id_externo"]: r for r in respuesta["resultados"]}
+        self.assertEqual(por_id["CTR-2025-014"]["resultado"], "registrada")
+        self.assertEqual(por_id["CTR-2025-022"]["resultado"], "retirada")
+
+    def test_calcula_la_mora_y_el_tramo_de_cada_deuda(self):
+        """
+        Los tramos son los de crm_portfoliohandover, para que la entrega y el
+        panel hablen de lo mismo.
+        """
+        respuesta = recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        por_id = {r["id_externo"]: r for r in respuesta["resultados"]}
+
+        self.assertEqual(por_id["CTR-2025-014"]["mora_dias"], 44)
+        self.assertEqual(por_id["CTR-2025-014"]["tramo"], "31-90")
+        self.assertEqual(por_id["CTR-2026-031"]["mora_dias"], 13)
+        self.assertEqual(por_id["CTR-2026-031"]["tramo"], "1-30")
+        self.assertEqual(por_id["CTR-2024-007"]["mora_dias"], 75)
+
+    def test_guarda_deudores_deudas_y_cargos(self):
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+        self.assertEqual(Debtor.objects.count(), 3)
+        self.assertEqual(Debt.objects.count(), 3)
+        self.assertEqual(DebtCharge.objects.count(), 6)
+
+        deuda = Debt.objects.get(external_id="CTR-2025-014")
+        self.assertEqual(deuda.saldo, Decimal("1040000.00"))
+        self.assertEqual(deuda.charges.count(), 2)
+        self.assertEqual(deuda.debtor.tax_id, "16482337-7")
+        self.assertEqual(deuda.refs["propiedad"], "Depto 1204, Av. Irarrázaval 2450, Ñuñoa")
+        self.assertEqual(deuda.dias_mora(date(2026, 9, 18)), 44)
+
+    def test_la_empresa_sin_telefono_queda_con_un_solo_canal(self):
+        """
+        El doble canal del codigo de acceso necesita correo Y telefono. Con uno
+        solo se puede cobrar igual, pero conviene saber cuales son.
+        """
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        empresa = Debtor.objects.get(tax_id="76991245-2")
+
+        self.assertEqual(empresa.kind, Debtor.Kind.COMPANY)
+        self.assertEqual([c[0] for c in empresa.canales], ["correo"])
+        self.assertEqual(len(Debtor.objects.get(tax_id="16482337-7").canales), 2)
+
+
+class ReenviarNoDuplica(TestCase):
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+
+    def test_el_mismo_lote_dos_veces_devuelve_la_misma_respuesta(self):
+        primera = recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        segunda = recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+        self.assertFalse(primera["repetido"])
+        self.assertTrue(segunda["repetido"])
+        self.assertEqual(primera["resultados"], segunda["resultados"])
+        self.assertEqual(Batch.objects.count(), 1)
+        self.assertEqual(Debt.objects.count(), 3)
+
+    def test_el_mismo_id_con_otro_contenido_se_rechaza(self):
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        distinta = cartera_de_ejemplo()
+        distinta["deudas"][0]["cargos"][0]["monto"] = 999000
+
+        with self.assertRaises(CarteraInvalida) as fallo:
+            recibir_cartera(self.acreedor, distinta)
+        self.assertEqual(fallo.exception.codigo, "lote_id_reutilizado")
+        self.assertEqual(fallo.exception.status, 409)
+
+    def test_la_misma_deuda_en_otro_lote_sin_cambios_no_toca_nada(self):
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        otra_vez = cartera_de_ejemplo()
+        otra_vez["lote"]["id_externo"] = "PAT-2026-09-18-02"
+        otra_vez["deudas"] = [otra_vez["deudas"][0]]
+
+        respuesta = recibir_cartera(self.acreedor, otra_vez)
+        self.assertEqual(respuesta["resultados"][0]["resultado"], "sin_cambios")
+
+    def test_una_deuda_con_menos_saldo_se_actualiza_y_reemplaza_sus_cargos(self):
+        """
+        El arrendatario pago un mes en la oficina: el acreedor reenvia la deuda
+        con menos cargos. Conservar los viejos dejaria a APOFYX cobrando un
+        monto que ya no existe.
+        """
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        actualizada = cartera_de_ejemplo()
+        actualizada["lote"]["id_externo"] = "PAT-2026-09-25-01"
+        primera = copy.deepcopy(actualizada["deudas"][0])
+        primera["cargos"] = primera["cargos"][1:]
+        actualizada["deudas"] = [primera]
+
+        respuesta = recibir_cartera(self.acreedor, actualizada)
+        deuda = Debt.objects.get(external_id="CTR-2025-014")
+
+        self.assertEqual(respuesta["resultados"][0]["resultado"], "actualizada")
+        self.assertEqual(deuda.charges.count(), 1)
+        self.assertEqual(deuda.saldo, Decimal("520000.00"))
+
+
+class RechazaLoQueNoCorresponde(TestCase):
+    """Aceptacion parcial: lo malo se cae solo y lo bueno entra igual."""
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+
+    def _una_deuda(self, cambios):
+        payload = cartera_de_ejemplo()
+        payload["deudas"] = [copy.deepcopy(payload["deudas"][0])]
+        cambios(payload["deudas"][0])
+        return recibir_cartera(self.acreedor, payload)["resultados"][0]
+
+    def codigos(self, resultado):
+        return [e["codigo"] for e in resultado.get("errores", [])]
+
+    def test_rut_con_digito_verificador_falso(self):
+        r = self._una_deuda(lambda d: d["deudor"].update(rut="16482337-8"))
+        self.assertIn("rut_invalido", self.codigos(r))
+
+    def test_deudor_sin_correo_ni_telefono(self):
+        def sin_contacto(d):
+            d["deudor"].pop("correo")
+            d["deudor"].pop("telefono")
+        self.assertIn("sin_canal_contacto", self.codigos(self._una_deuda(sin_contacto)))
+
+    def test_cargo_que_todavia_no_vence(self):
+        r = self._una_deuda(lambda d: d["cargos"][0].update(fecha_vencimiento="2026-09-30"))
+        self.assertIn("cargo_no_vencido", self.codigos(r))
+
+    def test_mora_mayor_a_120_dias_vuelve_al_acreedor(self):
+        r = self._una_deuda(lambda d: d["cargos"][0].update(fecha_vencimiento="2026-01-05"))
+        self.assertIn("mora_fuera_de_mandato", self.codigos(r))
+
+    def test_pesos_con_decimales(self):
+        r = self._una_deuda(lambda d: d["cargos"][0].update(monto=520000.5))
+        self.assertIn("monto_invalido", self.codigos(r))
+
+    def test_uf_con_mas_de_dos_decimales(self):
+        def uf_larga(d):
+            d["moneda"] = "UF"
+            d["cargos"][0]["monto"] = 38.555
+        self.assertIn("monto_invalido", self.codigos(self._una_deuda(uf_larga)))
+
+    def test_retirar_una_deuda_que_no_existe(self):
+        payload = cartera_de_ejemplo()
+        payload["deudas"] = [{"id_externo": "CTR-9999", "accion": "retirar",
+                              "motivo_retiro": "pago_directo"}]
+        r = recibir_cartera(self.acreedor, payload)["resultados"][0]
+        self.assertIn("deuda_no_encontrada", self.codigos(r))
+
+    def test_dos_deudas_con_el_mismo_id_en_el_lote(self):
+        payload = cartera_de_ejemplo()
+        payload["deudas"] = [payload["deudas"][0], copy.deepcopy(payload["deudas"][0])]
+        respuesta = recibir_cartera(self.acreedor, payload)
+
+        self.assertEqual(respuesta["aceptadas"], 1)
+        self.assertIn("id_duplicado_en_lote", self.codigos(respuesta["resultados"][1]))
+
+    def test_una_deuda_mala_no_arrastra_a_las_demas(self):
+        payload = cartera_de_ejemplo()
+        payload["deudas"][1]["deudor"]["rut"] = "11111111-2"
+
+        respuesta = recibir_cartera(self.acreedor, payload)
+        self.assertEqual(respuesta["aceptadas"], 2)
+        self.assertEqual(respuesta["rechazadas"], 2)  # el RUT malo y el retiro sin deuda previa
+        self.assertTrue(Debt.objects.filter(external_id="CTR-2025-014").exists())
+
+    def test_la_cartera_dice_ser_de_otro_acreedor(self):
+        otro = cartera_de_ejemplo()
+        otro["lote"]["acreedor"]["rut"] = "77305118-6"
+
+        with self.assertRaises(CarteraInvalida) as fallo:
+            recibir_cartera(self.acreedor, otro)
+        self.assertEqual(fallo.exception.codigo, "acreedor_no_coincide")
+        self.assertEqual(fallo.exception.status, 403)
+
+    def test_una_version_que_no_se_conoce(self):
+        futura = cartera_de_ejemplo()
+        futura["version"] = "2.0"
+        with self.assertRaises(CarteraInvalida) as fallo:
+            recibir_cartera(self.acreedor, futura)
+        self.assertEqual(fallo.exception.codigo, "version_no_soportada")
+
+    def test_avisa_de_los_campos_que_no_conoce(self):
+        """Se reciben igual: el receptor es tolerante, pero lo dice."""
+        payload = cartera_de_ejemplo()
+        payload["deudas"][0]["color_favorito"] = "azul"
+        respuesta = recibir_cartera(self.acreedor, payload)
+
+        self.assertIn("deudas[].color_favorito", respuesta["campos_ignorados"])
+        self.assertEqual(respuesta["aceptadas"], 3)
+
+
+class UnDeudorEsElMismoEnTodosLosAcreedores(TestCase):
+
+    def test_el_rut_no_se_duplica_entre_acreedores(self):
+        """
+        Si el mismo RUT apareciera dos veces, APOFYX no podria saber cuantas
+        veces le esta escribiendo a la misma persona.
+        """
+        patrimonio = crear_acreedor()
+        gimnasio = crear_acreedor("76543210-3", "Vitalis Gym")
+
+        recibir_cartera(patrimonio, cartera_de_ejemplo())
+        del_gimnasio = cartera_de_ejemplo()
+        del_gimnasio["lote"]["acreedor"]["rut"] = "76543210-3"
+        del_gimnasio["lote"]["id_externo"] = "VIT-2026-09-01"
+        del_gimnasio["deudas"] = [copy.deepcopy(del_gimnasio["deudas"][0])]
+        del_gimnasio["deudas"][0]["id_externo"] = "SOCIO-4410"
+        recibir_cartera(gimnasio, del_gimnasio)
+
+        deudor = Debtor.objects.get(tax_id="16482337-7")
+        self.assertEqual(Debtor.objects.count(), 3)
+        self.assertEqual(deudor.debts.count(), 2)
+        self.assertEqual(
+            sorted(d.creditor.trade_name for d in deudor.debts.all()),
+            ["Patrimonio Inmuebles", "Vitalis Gym"],
+        )
+
+
+class ElEndpointPideCredencial(TestCase):
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        self.clave, self.registro = ApiKey.emitir(self.acreedor, "Patrimonio")
+        self.url = reverse("integracion:carteras")
+
+    def _enviar(self, payload, clave=None):
+        return self.client.post(
+            self.url, data=json.dumps(payload), content_type="application/json",
+            headers={"authorization": f"Bearer {clave if clave is not None else self.clave}"},
+        )
+
+    def test_con_la_clave_correcta_recibe_la_cartera(self):
+        r = self._enviar(cartera_de_ejemplo())
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["aceptadas"], 3)
+
+    def test_sin_clave_no_entra(self):
+        r = self.client.post(self.url, data=json.dumps(cartera_de_ejemplo()),
+                             content_type="application/json")
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(r.json()["error"]["codigo"], "no_autorizado")
+
+    def test_con_una_clave_inventada_tampoco(self):
+        self.assertEqual(self._enviar(cartera_de_ejemplo(), "apx_cualquier_cosa").status_code, 401)
+
+    def test_una_clave_revocada_deja_de_servir(self):
+        from django.utils import timezone
+        ApiKey.objects.filter(pk=self.registro.pk).update(revoked_at=timezone.now())
+        self.assertEqual(self._enviar(cartera_de_ejemplo()).status_code, 401)
+
+    def test_la_clave_no_se_guarda_en_la_base(self):
+        """Se guarda su huella. Si se pierde, se emite otra; no se recuerda."""
+        self.assertNotIn(self.clave, json.dumps(list(
+            ApiKey.objects.values("key_hash", "prefix", "name")
+        )))
+        self.assertEqual(self.registro.key_hash, ApiKey.huella(self.clave))
+
+    def test_el_cuerpo_que_no_es_json(self):
+        r = self.client.post(self.url, data="{roto", content_type="application/json",
+                             headers={"authorization": f"Bearer {self.clave}"})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"]["codigo"], "json_invalido")
+
+    def test_la_clave_registra_su_ultimo_uso(self):
+        self._enviar(cartera_de_ejemplo())
+        self.registro.refresh_from_db()
+        self.assertIsNotNone(self.registro.last_used_at)
+
+
+class LaCopiaDelContratoEstaAlDia(TestCase):
+    """
+    El fixture es una copia del ejemplo publicado del contrato. Si el otro
+    repositorio esta al lado, se revisa que no se hayan separado.
+    """
+
+    def test_el_fixture_calza_con_el_ejemplo_publicado(self):
+        publicado = (
+            Path(ajustes.BASE_DIR).parent / "TB_web" / "docs" / "integracion"
+            / "ejemplos" / "cartera-v1.patrimonio.json"
+        )
+        if not publicado.exists():
+            self.skipTest("El repositorio de DataBridge no esta al lado")
+        self.assertEqual(
+            json.loads(publicado.read_text(encoding="utf-8")),
+            cartera_de_ejemplo(),
+            "El ejemplo del contrato cambio: hay que actualizar el fixture.",
+        )
+
+
+# ==========================================================================
+#  El reenvio a DataBridge
+# ==========================================================================
+
+from datetime import date as _date  # noqa: E402
+
+from django.test import override_settings  # noqa: E402
+
+from crm.esquema import valores_del_check  # noqa: E402
+from crm.models import Campaign  # noqa: E402
+
+from .models import Forward  # noqa: E402
+from .reenvio import (  # noqa: E402
+    ErrorDataBridge, canales_para_databridge, construir_cartera, despachar,
+    encolar, id_de_campana,
+)
+
+DATABRIDGE_PRUEBA = {
+    "URL": "http://databridge.prueba", "CLAVE": "tbk_prueba",
+    "RUT_AGENCIA": "77305118-6", "MORA_MAXIMA_DIAS": 120, "TIMEOUT_S": 2,
+    "REENVIO_INMEDIATO": False,
+}
+
+
+class ClienteFalso:
+    """Hace de DataBridge: anota lo que recibe y responde como el de verdad."""
+
+    def __init__(self, caido=False):
+        self.caido = caido
+        self.llamadas = []
+
+    def enviar(self, ruta, cuerpo):
+        if self.caido:
+            raise ErrorDataBridge("Sin respuesta de DataBridge: conexion rechazada")
+        self.llamadas.append((ruta, cuerpo))
+        if ruta == "/api/v1/carteras":
+            return {"lote": cuerpo["lote"]["id_externo"], "repetido": False,
+                    "recibidas": len(cuerpo["deudas"]), "aceptadas": len(cuerpo["deudas"]),
+                    "rechazadas": 0, "resultados": []}
+        return {"ok": True}
+
+
+def campana_de(acreedor):
+    return Campaign.objects.create(
+        creditor=acreedor, name="Patrimonio - Arriendos - Septiembre 2026",
+        starts_on=_date(2026, 9, 19), status=Campaign.Status.RUNNING,
+        channels=["whatsapp", "email", "sms"], contact_attempts=5,
+    )
+
+
+@override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+class LaCarteraQueSaleEsLaQueEntro(TestCase):
+    """
+    APOFYX no cambia montos ni cargos: lo que le pasa a DataBridge es
+    exactamente lo que el acreedor le entrego y APOFYX acepto.
+    """
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        self.campana = campana_de(self.acreedor)
+        recibir_cartera(self.acreedor, lote_de_agosto())
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        self.forward = Forward.objects.get(batch__external_id="PAT-2026-09-18-01")
+        self.cartera = construir_cartera(self.forward, self.campana)
+
+    def test_las_deudas_salen_identicas_a_como_entraron(self):
+        self.assertEqual(self.cartera["deudas"], cartera_de_ejemplo()["deudas"])
+
+    def test_el_acreedor_sigue_siendo_patrimonio(self):
+        self.assertEqual(self.cartera["lote"]["acreedor"]["rut"], RUT_PATRIMONIO)
+
+    def test_apofyx_agrega_su_mandato_y_su_propio_numero_de_lote(self):
+        lote = self.cartera["lote"]
+        self.assertEqual(lote["mandato"]["agencia_rut"], "77305118-6")
+        self.assertEqual(lote["mandato"]["campana_id_externo"], id_de_campana(self.campana))
+        self.assertNotEqual(lote["id_externo"], "PAT-2026-09-18-01")
+        self.assertTrue(lote["id_externo"].startswith("APX-2026-09-18-"))
+
+    def test_los_pesos_viajan_enteros_y_la_uf_con_decimales(self):
+        por_id = {d["id_externo"]: d for d in self.cartera["deudas"]}
+        self.assertIsInstance(por_id["CTR-2025-014"]["cargos"][0]["monto"], int)
+        self.assertEqual(por_id["CTR-2024-007"]["cargos"][0]["monto"], 38.5)
+
+
+@override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+class LaBandejaDeSalida(TestCase):
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+
+    def test_una_entrega_aceptada_queda_en_la_bandeja(self):
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        self.assertEqual(Forward.objects.count(), 1)
+        self.assertEqual(Forward.objects.get().status, Forward.Status.PENDING)
+
+    def test_una_entrega_totalmente_rechazada_no_se_reenvia(self):
+        mala = cartera_de_ejemplo()
+        mala["deudas"] = [{"id_externo": "CTR-9999", "accion": "retirar",
+                           "motivo_retiro": "pago_directo"}]
+        recibir_cartera(self.acreedor, mala)
+        self.assertEqual(Forward.objects.count(), 0)
+
+    @override_settings(DATABRIDGE={**DATABRIDGE_PRUEBA, "URL": "", "CLAVE": ""})
+    def test_sin_configuracion_apofyx_trabaja_solo(self):
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        self.assertEqual(Forward.objects.count(), 0)
+
+    def test_con_databridge_arriba_se_entrega(self):
+        campana_de(self.acreedor)
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        cliente = ClienteFalso()
+
+        forward = despachar(Forward.objects.get().pk, cliente)
+
+        self.assertEqual(forward.status, Forward.Status.SENT)
+        self.assertEqual([ruta for ruta, _ in cliente.llamadas],
+                         ["/api/v1/mandatos", "/api/v1/campanas", "/api/v1/carteras"])
+
+    def test_si_databridge_esta_caido_queda_para_reintentar(self):
+        campana_de(self.acreedor)
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+        forward = despachar(Forward.objects.get().pk, ClienteFalso(caido=True))
+
+        self.assertEqual(forward.status, Forward.Status.PENDING)
+        self.assertEqual(forward.attempts, 1)
+        self.assertIn("Sin respuesta", forward.last_error)
+        self.assertGreater(forward.next_attempt_at, forward.created_at)
+
+    def test_despues_del_ultimo_intento_queda_fallida(self):
+        campana_de(self.acreedor)
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        pk = Forward.objects.get().pk
+        for _ in range(len(Forward.ESPERAS)):
+            despachar(pk, ClienteFalso(caido=True))
+        self.assertEqual(Forward.objects.get(pk=pk).status, Forward.Status.FAILED)
+
+    def test_sin_campana_no_se_adivina_espera(self):
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        forward = despachar(Forward.objects.get().pk, ClienteFalso())
+        self.assertEqual(forward.status, Forward.Status.WAITING_CAMPAIGN)
+
+    def test_con_dos_campanas_en_curso_tampoco_se_adivina(self):
+        campana_de(self.acreedor)
+        Campaign.objects.create(
+            creditor=self.acreedor, name="Otra campana", starts_on=_date(2026, 9, 1),
+            status=Campaign.Status.RUNNING, channels=["email"],
+        )
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        forward = despachar(Forward.objects.get().pk, ClienteFalso())
+        self.assertEqual(forward.status, Forward.Status.WAITING_CAMPAIGN)
+
+    @override_settings(DATABRIDGE={**DATABRIDGE_PRUEBA, "URL": "http://127.0.0.1:9",
+                                   "REENVIO_INMEDIATO": True})
+    def test_la_recepcion_no_falla_aunque_databridge_este_caido(self):
+        """
+        El cliente de APOFYX tiene que recibir su respuesta aunque DataBridge
+        no conteste: el problema no es suyo.
+        """
+        campana_de(self.acreedor)
+        with self.captureOnCommitCallbacks(execute=True):
+            respuesta = recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+        self.assertEqual(respuesta["aceptadas"], 3)
+        forward = Forward.objects.get()
+        self.assertEqual(forward.status, Forward.Status.PENDING)
+        self.assertEqual(forward.attempts, 1)
+
+
+class ElVocabularioSeTraduceEnElBorde(TestCase):
+
+    def test_email_pasa_a_correo_y_el_sms_se_cae(self):
+        self.assertEqual(canales_para_databridge(["whatsapp", "email", "sms"]),
+                         ["whatsapp", "correo"])
+
+    def test_el_check_de_la_bandeja_calza_con_el_modelo(self):
+        self.assertEqual(valores_del_check("ck_forward_status"), set(Forward.Status.values))

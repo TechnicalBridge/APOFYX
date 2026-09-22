@@ -1,0 +1,85 @@
+{% extends "panel/base_panel.html" %}
+
+{% block titulo_panel %}Leads{% endblock %}
+{% block rotulo %}Leads{% endblock %}
+{% block encabezado %}Contactos entrantes{% endblock %}
+{% block cabecera_extra %}
+<p class="ap-micro mb-0">{{ total }} lead{{ total|pluralize }}</p>
+{% endblock %}
+
+{% block panel %}
+
+<form class="ap-filtros" method="get">
+    <div>
+        <label class="form-label" for="estado">Estado</label>
+        <select class="form-select" id="estado" name="estado">
+            <option value="">Todos</option>
+            {% for valor, etiqueta in estados %}
+            <option value="{{ valor }}" {% if valor == estado_elegido %}selected{% endif %}>{{ etiqueta }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label class="form-label" for="origen">Origen</label>
+        <select class="form-select" id="origen" name="origen">
+            <option value="">Todos</option>
+            {% for valor, etiqueta in origenes %}
+            <option value="{{ valor }}" {% if valor == origen_elegido %}selected{% endif %}>{{ etiqueta }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="ap-filtros__acciones">
+        <button class="btn btn-ap" type="submit">Filtrar</button>
+        <a class="btn btn-ap-linea" href="{% url 'panel:leads' %}">Limpiar</a>
+    </div>
+</form>
+
+<div class="ap-tabla-envoltorio">
+    <table class="ap-tabla ap-tabla--listado">
+        <thead>
+            <tr>
+                <th>Persona</th>
+                <th>Empresa</th>
+                <th>Rubro</th>
+                <th class="ap-num">Cartera</th>
+                <th>Gestión actual</th>
+                <th>Origen</th>
+                <th>Estado</th>
+                <th>Recibido</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for lead in leads %}
+            <tr>
+                <td>
+                    <a href="/admin/crm/lead/{{ lead.pk }}/change/">{{ lead.full_name }}</a>
+                    <span class="ap-micro d-block">{{ lead.email }}</span>
+                </td>
+                <td>{{ lead.company_name }}</td>
+                <td>{{ lead.industry.name|default:"—" }}</td>
+                <td class="ap-num">{{ lead.estimated_debtor_count|default:"—" }}</td>
+                <td>{{ lead.get_current_collection_method_display|default:"—" }}</td>
+                <td><span class="ap-micro">{{ lead.get_source_display }}</span></td>
+                <td><span class="ap-estado ap-estado--{{ lead.status }}">{{ lead.get_status_display }}</span></td>
+                <td class="ap-micro">{{ lead.created_at|date:"d/m/Y H:i" }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="8" class="ap-micro">No hay leads con ese filtro.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if pagina.has_other_pages %}
+<nav class="ap-paginacion" aria-label="Paginas">
+    {% if pagina.has_previous %}
+    <a href="?{% if estado_elegido %}estado={{ estado_elegido }}&{% endif %}{% if origen_elegido %}origen={{ origen_elegido }}&{% endif %}pagina={{ pagina.previous_page_number }}">Anterior</a>
+    {% endif %}
+    <span>Pagina {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+    {% if pagina.has_next %}
+    <a href="?{% if estado_elegido %}estado={{ estado_elegido }}&{% endif %}{% if origen_elegido %}origen={{ origen_elegido }}&{% endif %}pagina={{ pagina.next_page_number }}">Siguiente</a>
+    {% endif %}
+</nav>
+{% endif %}
+
+{% endblock %}

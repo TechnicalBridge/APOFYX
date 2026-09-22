@@ -1,0 +1,83 @@
+{% extends "panel/base_panel.html" %}
+
+{% block titulo_panel %}Clientes{% endblock %}
+{% block rotulo %}Clientes{% endblock %}
+{% block encabezado %}Empresas cliente{% endblock %}
+{% block cabecera_extra %}
+<p class="ap-micro mb-2">{{ total }} empresa{{ total|pluralize }}</p>
+<a class="btn btn-ap" href="{% url 'panel:cliente_nuevo' %}">Nueva empresa</a>
+{% endblock %}
+
+{% block panel %}
+
+<form class="ap-filtros" method="get">
+    <div>
+        <label class="form-label" for="q">Buscar</label>
+        <input class="form-control" type="search" id="q" name="q" value="{{ busqueda }}"
+               placeholder="Nombre o RUT">
+    </div>
+    <div>
+        <label class="form-label" for="rubro">Rubro</label>
+        <select class="form-select" id="rubro" name="rubro">
+            <option value="">Todos</option>
+            {% for r in rubros %}
+            <option value="{{ r.slug }}" {% if r.slug == rubro_elegido %}selected{% endif %}>{{ r.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label class="form-label" for="estado">Estado</label>
+        <select class="form-select" id="estado" name="estado">
+            <option value="">Todos</option>
+            {% for valor, etiqueta in estados %}
+            <option value="{{ valor }}" {% if valor == estado_elegido %}selected{% endif %}>{{ etiqueta }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="ap-filtros__acciones">
+        <button class="btn btn-ap" type="submit">Filtrar</button>
+        {% if hay_filtros %}
+        <a class="btn btn-ap-linea" href="{% url 'panel:clientes' %}">Limpiar</a>
+        {% endif %}
+    </div>
+</form>
+
+<div class="ap-tabla-envoltorio">
+    <table class="ap-tabla ap-tabla--listado">
+        <thead>
+            <tr>
+                <th>Empresa</th><th>RUT</th><th>Rubro</th>
+                <th class="ap-num">Cartera</th><th class="ap-num">Ticket medio</th>
+                <th>Estado</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for empresa in empresas %}
+            <tr>
+                <td><a href="{% url 'panel:cliente_detalle' empresa.pk %}">{{ empresa.trade_name }}</a></td>
+                <td class="ap-mono">{{ empresa.rut_formateado }}</td>
+                <td>{{ empresa.industry.name }}</td>
+                <td class="ap-num">{{ empresa.cartera.registros|default:"—" }}</td>
+                <td class="ap-num">{% if empresa.cartera.ticket %}${{ empresa.cartera.ticket|floatformat:0 }}{% else %}—{% endif %}</td>
+                <td><span class="ap-estado ap-estado--{{ empresa.status }}">{{ empresa.get_status_display }}</span></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6" class="ap-micro">Ninguna empresa coincide con el filtro.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if pagina.has_other_pages %}
+<nav class="ap-paginacion" aria-label="Paginas">
+    {% if pagina.has_previous %}
+    <a href="?{% if busqueda %}q={{ busqueda }}&{% endif %}{% if rubro_elegido %}rubro={{ rubro_elegido }}&{% endif %}{% if estado_elegido %}estado={{ estado_elegido }}&{% endif %}pagina={{ pagina.previous_page_number }}">Anterior</a>
+    {% endif %}
+    <span>Pagina {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+    {% if pagina.has_next %}
+    <a href="?{% if busqueda %}q={{ busqueda }}&{% endif %}{% if rubro_elegido %}rubro={{ rubro_elegido }}&{% endif %}{% if estado_elegido %}estado={{ estado_elegido }}&{% endif %}pagina={{ pagina.next_page_number }}">Siguiente</a>
+    {% endif %}
+</nav>
+{% endif %}
+
+{% endblock %}

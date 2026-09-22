@@ -1,0 +1,56 @@
+{% extends "panel/base_panel.html" %}
+
+{% block titulo_panel %}{% if es_nueva %}Nuevo cliente{% else %}Editar{% endif %}{% endblock %}
+{% block rotulo %}Clientes{% endblock %}
+{% block encabezado %}
+{% if es_nueva %}Nueva empresa cliente{% else %}Editar {{ empresa.trade_name }}{% endif %}
+{% endblock %}
+
+{% block panel %}
+
+<p class="mb-4">
+    <a class="ap-micro" href="{% if es_nueva %}{% url 'panel:clientes' %}{% else %}{% url 'panel:cliente_detalle' empresa.pk %}{% endif %}">
+        &larr; Volver
+    </a>
+</p>
+
+<div class="row">
+    <div class="col-lg-8">
+        <form method="post" novalidate>
+            {% csrf_token %}
+
+            {% if form.non_field_errors %}
+            <p class="ap-error mb-4">{{ form.non_field_errors|join:" " }}</p>
+            {% endif %}
+
+            <div class="row g-4">
+                {% for campo in form %}
+                <div class="{% if campo.name == 'internal_notes' %}col-12{% else %}col-md-6{% endif %}">
+                    <label class="form-label" for="{{ campo.id_for_label }}">
+                        {{ campo.label }}{% if campo.field.required %} <span style="color: var(--ap-oro)">*</span>{% endif %}
+                    </label>
+                    {{ campo }}
+                    {% if campo.help_text %}
+                    <div class="form-text mt-1">{{ campo.help_text }}</div>
+                    {% endif %}
+                    {% for error in campo.errors %}
+                    <div class="ap-error mt-1">{{ error }}</div>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+
+                <div class="col-12 pt-3 d-flex flex-wrap gap-3">
+                    <button class="btn btn-ap" type="submit">
+                        {% if es_nueva %}Registrar empresa{% else %}Guardar cambios{% endif %}
+                    </button>
+                    <a class="btn btn-ap-linea"
+                       href="{% if es_nueva %}{% url 'panel:clientes' %}{% else %}{% url 'panel:cliente_detalle' empresa.pk %}{% endif %}">
+                        Cancelar
+                    </a>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% endblock %}

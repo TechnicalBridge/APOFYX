@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block titulo %}Solicitud recibida — APOFYX{% endblock %}
+
+{% block contenido %}
+<section class="ap-seccion" style="border-top: none">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-7 revelar">
+                <p class="ap-rotulo">Solicitud recibida</p>
+                <h1 class="ap-h2 mb-3">Gracias. Ya tenemos sus datos.</h1>
+                <p class="ap-guia mb-4">
+                    El equipo comercial le escribira dentro de un dia habil. Si su caso es
+                    urgente, puede escribir directo a
+                    <a href="mailto:comercial@apofyx.cl">comercial@apofyx.cl</a>.
+                </p>
+                <a class="btn btn-ap-linea" href="{% url 'site:home' %}">Volver al inicio</a>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

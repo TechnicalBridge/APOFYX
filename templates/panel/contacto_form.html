@@ -1,0 +1,78 @@
+{% extends "panel/base_panel.html" %}
+
+{% block titulo_panel %}{% if es_nuevo %}Nuevo contacto{% else %}Editar contacto{% endif %}{% endblock %}
+{% block rotulo %}{{ empresa.trade_name }}{% endblock %}
+{% block encabezado %}
+{% if es_nuevo %}Nuevo contacto{% else %}Editar {{ contacto.full_name }}{% endif %}
+{% endblock %}
+
+{% block panel %}
+
+<p class="mb-4">
+    <a class="ap-micro" href="{% url 'panel:cliente_detalle' empresa.pk %}">
+        &larr; Volver a {{ empresa.trade_name }}
+    </a>
+</p>
+
+<div class="row">
+    <div class="col-lg-7">
+        <form method="post" novalidate>
+            {% csrf_token %}
+
+            <div class="row g-4">
+                {% for campo in form %}
+                {% if campo.name == 'is_primary' %}
+                <div class="col-12">
+                    <div class="form-check">
+                        {{ campo }}
+                        <label class="form-check-label ap-nota" for="{{ campo.id_for_label }}">
+                            {{ campo.label }}
+                        </label>
+                    </div>
+                    <div class="form-text mt-1">
+                        Marcarlo como principal degrada automáticamente al que lo era
+                        antes. Solo puede haber uno por empresa.
+                    </div>
+                </div>
+                {% else %}
+                <div class="col-md-6">
+                    <label class="form-label" for="{{ campo.id_for_label }}">
+                        {{ campo.label }}{% if campo.field.required %} <span style="color: var(--ap-oro)">*</span>{% endif %}
+                    </label>
+                    {{ campo }}
+                    {% for error in campo.errors %}
+                    <div class="ap-error mt-1">{{ error }}</div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% endfor %}
+
+                <div class="col-12 pt-3 d-flex flex-wrap gap-3">
+                    <button class="btn btn-ap" type="submit">
+                        {% if es_nuevo %}Agregar contacto{% else %}Guardar cambios{% endif %}
+                    </button>
+                    <a class="btn btn-ap-linea" href="{% url 'panel:cliente_detalle' empresa.pk %}">
+                        Cancelar
+                    </a>
+                </div>
+            </div>
+        </form>
+
+        {% if not es_nuevo %}
+        <form method="post" action="{% url 'panel:contacto_eliminar' empresa.pk contacto.pk %}"
+              class="mt-5 pt-4" style="border-top: 1px solid var(--ap-linea)"
+              onsubmit="return confirm('¿Eliminar a {{ contacto.full_name|escapejs }}? No se puede deshacer.');">
+            {% csrf_token %}
+            <p class="ap-micro mb-2">
+                Eliminar borra el contacto de forma definitiva. La empresa y su
+                historial no se tocan.
+            </p>
+            <button class="btn btn-ap-linea" type="submit" style="color: #e08a7a">
+                Eliminar contacto
+            </button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,79 @@
+{
+  "version": "1.0",
+  "lote": {
+    "id_externo": "PAT-2026-09-18-01",
+    "fecha_corte": "2026-09-18",
+    "emitido_en": "2026-09-18T09:00:00-03:00",
+    "acreedor": {
+      "rut": "76418902-7",
+      "razon_social": "Patrimonio Inmuebles SpA",
+      "nombre_fantasia": "Patrimonio Inmuebles"
+    }
+  },
+  "deudas": [
+    {
+      "id_externo": "CTR-2025-014",
+      "deudor": {
+        "rut": "16482337-7",
+        "tipo": "persona",
+        "nombre": "Felipe Rojas Muñoz",
+        "correo": "felipe.rojas@correo.cl",
+        "telefono": "+56987654321"
+      },
+      "moneda": "CLP",
+      "concepto": "Arriendo mensual",
+      "referencias": {
+        "contrato": "CTR-2025-014",
+        "propiedad": "Depto 1204, Av. Irarrázaval 2450, Ñuñoa"
+      },
+      "cargos": [
+        { "concepto": "Arriendo agosto", "periodo": "2026-08", "monto": 520000, "fecha_vencimiento": "2026-08-05" },
+        { "concepto": "Arriendo septiembre", "periodo": "2026-09", "monto": 520000, "fecha_vencimiento": "2026-09-05" }
+      ]
+    },
+    {
+      "id_externo": "CTR-2026-031",
+      "deudor": {
+        "rut": "18905214-6",
+        "tipo": "persona",
+        "nombre": "Valentina Soto Pizarro",
+        "correo": "valentina.soto@correo.cl",
+        "telefono": "+56912348765"
+      },
+      "moneda": "CLP",
+      "concepto": "Arriendo mensual",
+      "referencias": {
+        "contrato": "CTR-2026-031",
+        "propiedad": "Depto 305, Los Leones 1180, Providencia"
+      },
+      "cargos": [
+        { "concepto": "Arriendo septiembre", "periodo": "2026-09", "monto": 410000, "fecha_vencimiento": "2026-09-05" }
+      ]
+    },
+    {
+      "id_externo": "CTR-2024-007",
+      "deudor": {
+        "rut": "76991245-2",
+        "tipo": "empresa",
+        "nombre": "Comercial Ñandú SpA",
+        "correo": "administracion@nandu.cl"
+      },
+      "moneda": "UF",
+      "concepto": "Arriendo local comercial",
+      "referencias": {
+        "contrato": "CTR-2024-007",
+        "propiedad": "Local 3, Av. Italia 1320, Providencia"
+      },
+      "cargos": [
+        { "concepto": "Arriendo julio", "periodo": "2026-07", "monto": 38.5, "fecha_vencimiento": "2026-07-05" },
+        { "concepto": "Arriendo agosto", "periodo": "2026-08", "monto": 38.5, "fecha_vencimiento": "2026-08-05" },
+        { "concepto": "Arriendo septiembre", "periodo": "2026-09", "monto": 38.5, "fecha_vencimiento": "2026-09-05" }
+      ]
+    },
+    {
+      "id_externo": "CTR-2025-022",
+      "accion": "retirar",
+      "motivo_retiro": "pago_directo"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% comment %}
+Armazon del panel interno. Reusa la base publica para no duplicar el <head>,
+pero reemplaza la navegacion: aca no se vende nada, se opera.
+{% endcomment %}
+
+{% block titulo %}{% block titulo_panel %}Panel{% endblock %} — APOFYX{% endblock %}
+
+{% block navegacion %}
+<li class="nav-item"><a class="nav-link {% if activo == 'resumen' %}ap-nav--activo{% endif %}" href="{% url 'panel:dashboard' %}">Resumen</a></li>
+<li class="nav-item"><a class="nav-link {% if activo == 'clientes' %}ap-nav--activo{% endif %}" href="{% url 'panel:clientes' %}">Clientes</a></li>
+<li class="nav-item"><a class="nav-link {% if activo == 'leads' %}ap-nav--activo{% endif %}" href="{% url 'panel:leads' %}">Leads</a></li>
+<li class="nav-item"><a class="nav-link" href="/admin/">Datos</a></li>
+<li class="nav-item ms-lg-3 mt-2 mt-lg-0">
+    <form method="post" action="{% url 'panel:logout' %}" class="d-inline">
+        {% csrf_token %}
+        <button class="btn btn-ap-linea w-100" type="submit">Salir</button>
+    </form>
+</li>
+{% endblock %}
+
+{# El asistente orienta a visitantes del sitio publico; dentro del panel
+   estorba y no tiene nada que responder. #}
+{% block asistente %}{% endblock %}
+{% block script_asistente %}{% endblock %}
+
+{% block contenido %}
+<section class="ap-panel-pagina">
+    <div class="container">
+        <header class="ap-panel-cabecera">
+            <div>
+                <p class="ap-rotulo">{% block rotulo %}Panel{% endblock %}</p>
+                <h1 class="ap-h2 mb-0">{% block encabezado %}{% endblock %}</h1>
+            </div>
+            <div class="ap-panel-cabecera__extra">{% block cabecera_extra %}{% endblock %}</div>
+        </header>
+
+        {# Los avisos de exito o error de las acciones del panel. #}
+        {% if messages %}
+        <div class="mb-4 d-grid gap-2">
+            {% for mensaje in messages %}
+            <p class="ap-aviso ap-aviso--{{ mensaje.tags }} mb-0">{{ mensaje }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% block panel %}{% endblock %}
+    </div>
+</section>
+{% endblock %}

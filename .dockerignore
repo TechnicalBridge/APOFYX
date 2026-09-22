@@ -1,0 +1,15 @@
+# Lo que NO debe entrar en la imagen de la app.
+.git
+.gitignore
+.env
+.venv
+venv
+__pycache__
+*.py[cod]
+*.log
+docs
+sql
+Dockerfile
+docker-compose.yml
+.vscode
+.idea

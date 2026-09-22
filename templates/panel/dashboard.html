@@ -1,0 +1,100 @@
+{% extends "panel/base_panel.html" %}
+
+{% block titulo_panel %}Resumen{% endblock %}
+{% block rotulo %}Resumen{% endblock %}
+{% block encabezado %}Estado de la operación{% endblock %}
+{% block cabecera_extra %}
+<p class="ap-micro mb-0">{{ conversaciones }} conversación{{ conversaciones|pluralize:"es" }} en el asistente</p>
+{% endblock %}
+
+{% block panel %}
+
+<div class="ap-kpis">
+    <div class="ap-kpi">
+        <span class="ap-kpi__valor">{{ clientes_activos }}</span>
+        <span class="ap-kpi__texto">Clientes activos<br><em>de {{ clientes_total }} en total</em></span>
+    </div>
+    <div class="ap-kpi">
+        <span class="ap-kpi__valor">{{ cartera_total }}</span>
+        <span class="ap-kpi__texto">Deudores en gestión<br><em>último periodo</em></span>
+    </div>
+    <div class="ap-kpi">
+        <span class="ap-kpi__valor">{{ campanas_en_curso }}</span>
+        <span class="ap-kpi__texto">Campañas en curso</span>
+    </div>
+    <div class="ap-kpi">
+        <span class="ap-kpi__valor">{{ leads_nuevos }}</span>
+        <span class="ap-kpi__texto">Leads sin atender</span>
+    </div>
+</div>
+
+<div class="row g-5 mt-1">
+    <div class="col-lg-7">
+        <h2 class="ap-h3 mb-3">Embudo acumulado</h2>
+        {# Termina en el clic a proposito: APOFYX no mide mas alla, porque el
+           pago ocurre fuera de su producto (docs seccion 11.3). #}
+        <table class="ap-tabla">
+            <tbody>
+                <tr><th>Mensajes enviados</th><td class="ap-num">{{ embudo.enviados }}</td><td class="ap-pct">—</td></tr>
+                <tr><th>Entregados</th><td class="ap-num">{{ embudo.entregados }}</td><td class="ap-pct">{{ tasas.entrega }}%</td></tr>
+                <tr><th>Abiertos</th><td class="ap-num">{{ embudo.abiertos }}</td><td class="ap-pct">{{ tasas.apertura }}%</td></tr>
+                <tr><th>Respondieron</th><td class="ap-num">{{ embudo.respondidos }}</td><td class="ap-pct">—</td></tr>
+                <tr class="ap-tabla__destacada"><th>Clics en el enlace</th><td class="ap-num">{{ embudo.clics }}</td><td class="ap-pct">{{ tasas.clic }}%</td></tr>
+            </tbody>
+        </table>
+        <p class="ap-micro mt-2 mb-4">
+            El embudo termina en el clic: el pago ocurre fuera de APOFYX.
+        </p>
+
+        <h2 class="ap-h3 mb-3">Señales de fricción</h2>
+        <table class="ap-tabla">
+            <tbody>
+                <tr><th>Reportes de fraude</th><td class="ap-num ap-num--alerta">{{ embudo.fraudes }}</td></tr>
+                <tr><th>Solicitudes de baja</th><td class="ap-num">{{ embudo.bajas }}</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="col-lg-5">
+        <h2 class="ap-h3 mb-3">Clientes por rubro</h2>
+        <table class="ap-tabla mb-4">
+            <tbody>
+                {% for rubro in rubros %}
+                <tr><th>{{ rubro.name }}</th><td class="ap-num">{{ rubro.total }}</td></tr>
+                {% empty %}
+                <tr><td class="ap-micro">Sin clientes cargados.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h2 class="ap-h3 mb-3">Asistente del sitio</h2>
+        <table class="ap-tabla mb-2">
+            <tbody>
+                {% for fila in cobertura_asistente %}
+                <tr><th>{{ fila.answer_engine|default:"sin motor" }}</th><td class="ap-num">{{ fila.total }}</td></tr>
+                {% empty %}
+                <tr><td class="ap-micro">Todavía no hay conversaciones.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <p class="ap-micro mb-4">
+            Qué motor resolvió cada respuesta. Mientras más alto sea
+            <em>rules</em>, más completo está el catálogo de intenciones.
+        </p>
+
+        <h2 class="ap-h3 mb-3">Últimos leads</h2>
+        <div class="ap-lista-compacta">
+            {% for lead in ultimos_leads %}
+            <div>
+                <strong>{{ lead.full_name }}</strong>
+                <span class="ap-micro d-block">{{ lead.company_name }} · {{ lead.get_source_display }}</span>
+            </div>
+            {% empty %}
+            <p class="ap-micro mb-0">Sin leads todavía.</p>
+            {% endfor %}
+        </div>
+        <a class="btn btn-ap-linea mt-3" href="{% url 'panel:leads' %}">Ver todos</a>
+    </div>
+</div>
+
+{% endblock %}

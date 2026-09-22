@@ -1,0 +1,111 @@
+{% load static %}<!DOCTYPE html>
+{# data-bs-theme="dark" activa el modo oscuro nativo de Bootstrap 5.3 #}
+<html lang="es-CL" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    {# Sin esta linea no hay responsivo real: el navegador simula 980px #}
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="{% block descripcion %}APOFYX recupera cartera morosa con contacto digital automatizado, sin call center. Para empresas con carteras masivas de ticket bajo.{% endblock %}">
+    <meta name="theme-color" content="#06100f">
+    <title>{% block titulo %}APOFYX — Recupera tu cartera sin call center{% endblock %}</title>
+
+    <link rel="icon" href="{% static 'brand/favicon.ico' %}" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="{% static 'brand/favicon-32.png' %}">
+
+    <link rel="stylesheet" href="{% static 'vendor/bootstrap/bootstrap.min.css' %}">
+    <link rel="stylesheet" href="{% static 'css/main.css' %}">
+    {% block estilos %}{% endblock %}
+</head>
+<body>
+
+<a class="visually-hidden-focusable btn btn-ap display_order-absolute top-0 start-0 m-2" href="#contenido">
+    Saltar al contenido
+</a>
+
+<header class="ap-cabecera sticky-top" id="cabecera">
+    <nav class="navbar navbar-expand-lg py-2">
+        <div class="container">
+            <a class="ap-marca navbar-brand p-0" href="{% url 'site:home' %}">
+                <img class="ap-marca__logo" src="{% static 'brand/isotipo.png' %}"
+                     alt="" width="492" height="640" aria-hidden="true">
+                <span class="ap-marca__nombre">APOFYX</span>
+            </a>
+
+            <button class="navbar-toggler" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#menu-principal"
+                    aria-controls="menu-principal" aria-expanded="false"
+                    aria-label="Abrir el menu de navegacion">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
+            <div class="collapse navbar-collapse" id="menu-principal">
+                <ul class="navbar-nav ap-nav ms-auto align-items-lg-center gap-lg-1 mt-3 mt-lg-0">
+                    {% block navegacion %}
+                    <li class="nav-item"><a class="nav-link" href="{% url 'site:home' %}#proceso">Proceso</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{% url 'site:home' %}#rubros">Rubros</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{% url 'panel:login' %}">Acceso clientes</a></li>
+                    <li class="nav-item ms-lg-2 mt-2 mt-lg-0">
+                        <a class="btn btn-ap w-100" href="{% url 'site:home' %}#contacto">Hablemos</a>
+                    </li>
+                    {% endblock %}
+                </ul>
+            </div>
+        </div>
+    </nav>
+</header>
+
+<main id="contenido">
+    {% block contenido %}{% endblock %}
+</main>
+
+<footer class="ap-pie">
+    <div class="container">
+        <div class="row g-4">
+            <div class="col-lg-5">
+                <div class="ap-marca mb-3">
+                    <img class="ap-marca__logo" src="{% static 'brand/isotipo.png' %}"
+                         alt="" width="492" height="640" aria-hidden="true">
+                    <span class="ap-marca__nombre">APOFYX</span>
+                </div>
+                <p class="mb-0" style="max-width: 40ch">
+                    Cobranza extrajudicial para carteras masivas de ticket bajo.
+                    Santiago de Chile.
+                </p>
+            </div>
+
+            <div class="col-6 col-lg-3">
+                <p class="ap-pie__titulo">Servicio</p>
+                <ul class="list-unstyled d-grid gap-2 mb-0">
+                    <li><a href="{% url 'site:home' %}#proceso">Proceso</a></li>
+                    <li><a href="{% url 'site:home' %}#rubros">Rubros atendidos</a></li>
+                    <li><a href="{% url 'site:home' %}#contacto">Contacto</a></li>
+                </ul>
+            </div>
+
+            <div class="col-6 col-lg-4">
+                <p class="ap-pie__titulo">Contacto</p>
+                <ul class="list-unstyled d-grid gap-2 mb-0">
+                    <li><a href="mailto:comercial@apofyx.cl">comercial@apofyx.cl</a></li>
+                    <li><a href="mailto:contacto@apofyx.cl">contacto@apofyx.cl</a></li>
+                    <li><a href="{% url 'panel:login' %}">Acceso clientes</a></li>
+                </ul>
+            </div>
+        </div>
+
+        <p class="ap-pie__legal mb-0">
+            APOFYX SpA · Santiago de Chile · Actuamos como mandatarios de cobranza
+            extrajudicial y encargados de tratamiento de datos personales.<br>
+            Proyecto academico. Empresa, datos y cifras son ficticios.
+        </p>
+    </div>
+</footer>
+
+{% block asistente %}{% include "components/asistente.html" %}{% endblock %}
+
+<script src="{% static 'vendor/bootstrap/bootstrap.bundle.min.js' %}" defer></script>
+<script src="{% static 'js/animaciones.js' %}" defer></script>
+{% block script_asistente %}<script src="{% static 'js/asistente.js' %}" defer></script>{% endblock %}
+{% block scripts %}{% endblock %}
+
+</body>
+</html>
