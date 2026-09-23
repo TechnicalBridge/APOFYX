@@ -7,6 +7,12 @@ extrajudicial para carteras masivas de ticket bajo.
 
 Proyecto de Capstone. La empresa, los datos y las cifras son ficticios.
 
+APOFYX es la pieza del medio de una cadena de tres empresas:
+[**Patrimonio Inmuebles**](https://github.com/TechnicalBridge/patrimonioinmuebles), que administra
+arriendos y es el acreedor, → **APOFYX**, que cobra por cuenta de sus clientes, →
+[**DataBridge**](https://github.com/TechnicalBridge/TB_web), donde el deudor paga. Las tres se
+hablan solo por un contrato versionado, nunca por la base de datos.
+
 ```
 Django 6.1  ·  MySQL 8.4  ·  Bootstrap 5.3  ·  HTML/CSS/JS sin frameworks
 ```
