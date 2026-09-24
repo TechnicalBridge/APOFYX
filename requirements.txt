@@ -14,7 +14,7 @@ Django==6.1.1
 # Este equipo ya tiene mysqlclient 2.2.8 funcionando sobre Python 3.14,
 # por eso se usa este y no PyMySQL. Si la instalacion fallara por falta de
 # compilador, la alternativa sin compilar es:  PyMySQL==1.2.0
-mysqlclient>=2.2.8
+mysqlclient>=2.3.0
 
 # --- Configuracion ---
 # Credenciales de MySQL, SECRET_KEY y claves del LLM fuera del codigo, en .env
