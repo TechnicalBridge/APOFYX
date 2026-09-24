@@ -32,7 +32,7 @@ whitenoise==6.12.0
 # Se usa unicamente cuando el motor de reglas no alcanza el umbral de
 # confianza. Sin GEMINI_API_KEY el asistente funciona igual: cae en la
 # respuesta de fallback guardada en la base de datos.
-google-genai==2.23.0
+google-genai==2.24.0
 
 # --- Desarrollo ---
 # Mide que porcentaje del codigo ejecutan las pruebas:
