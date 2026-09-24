@@ -1,0 +1,58 @@
+# =============================================================================
+#  Analisis estatico de seguridad — CodeQL
+# =============================================================================
+#  Lee el codigo buscando patrones que terminan en vulnerabilidad: inyeccion
+#  de SQL, datos del usuario que llegan sin filtrar a una consulta o a una
+#  plantilla, secretos escritos en el codigo.
+#
+#  Importa especialmente aca: APOFYX recibe carteras de terceros por HTTP y
+#  las escribe en la base.
+#
+#  Los hallazgos quedan en la pestana Security del repositorio, con fecha.
+# =============================================================================
+name: CodeQL
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1'
+
+jobs:
+  analizar:
+    name: Analizar ${{ matrix.lenguaje }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        lenguaje: [python, javascript-typescript]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preparar CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.lenguaje }}
+          build-mode: none
+          # Bootstrap minificado es codigo de terceros: analizarlo solo llena la
+          # pestana Security de avisos que nadie aca puede ni debe corregir.
+          # Ojo: Dependabot tampoco lo vigila, porque esta copiado a mano y no
+          # viene de un gestor de paquetes. Su version esta anotada en
+          # static/vendor/bootstrap/VERSION.txt y se actualiza a mano.
+          # Las migraciones las genera Django.
+          config: |
+            paths-ignore:
+              - static/vendor
+              - '**/migrations/**'
+
+      - name: Analizar
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.lenguaje }}

@@ -18,7 +18,12 @@ mysqlclient>=2.2.8
 
 # --- Configuracion ---
 # Credenciales de MySQL, SECRET_KEY y claves del LLM fuera del codigo, en .env
-python-dotenv==1.2.1
+python-dotenv==1.2.2
+
+# --- Archivos estaticos ---
+# Con DEBUG=0 Django no sirve los estaticos: espera un nginx delante. En el
+# contenedor no lo hay, y WhiteNoise los sirve desde el mismo proceso.
+whitenoise==6.12.0
 
 # --- Respaldo del asistente (D4: hibrido reglas + LLM) ---
 # Google Gemini, tier gratuito de AI Studio. Solo requiere GEMINI_API_KEY
@@ -31,6 +36,6 @@ google-genai==2.23.0
 
 # --- Desarrollo ---
 # Mide que porcentaje del codigo ejecutan las pruebas:
-#   python -m coverage run --source=crm,assistant,config --omit="*/migrations/*,*/tests.py" manage.py test
+#   python -m coverage run --source=crm,assistant,cartera,integracion,config --omit="*/migrations/*,*/tests.py" manage.py test
 #   python -m coverage report -m
-coverage==7.13.0
+coverage==7.16.1

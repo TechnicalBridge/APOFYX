@@ -25,3 +25,8 @@ sql/.datos-*.sql
 .idea/
 Thumbs.db
 desktop.ini
+
+# --- Cobertura ---
+# Lo genera 'coverage run'. Es un binario que cambia en cada corrida.
+.coverage
+htmlcov/

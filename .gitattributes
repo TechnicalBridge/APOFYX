@@ -1,0 +1,13 @@
+# =============================================================================
+#  Finales de linea
+# =============================================================================
+#  Este repositorio se trabaja en Windows con core.autocrlf=true: Git guarda LF
+#  y al hacer checkout reescribe cada archivo con CRLF. Para casi todo da lo
+#  mismo. Para un script de shell, no: el kernel de Linux lee la primera linea
+#  como "#!/bin/sh\r", busca un interprete con ese nombre, no lo encuentra, y
+#  el contenedor no arranca. El error que muestra ("no such file or
+#  directory") no dice nada de retornos de carro.
+#
+#  Estas lineas obligan a LF en los scripts, se clone donde se clone.
+# =============================================================================
+*.sh    text eol=lf

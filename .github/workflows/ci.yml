@@ -52,3 +52,23 @@ jobs:
 
       - run: python manage.py check
       - run: python manage.py test --noinput
+
+  seguridad:
+    name: Dependencias vulnerables
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      # pip-audit resuelve las dependencias con pip para auditar tambien las
+      # transitivas (asgiref, sqlparse...), y para eso tiene que armar cada
+      # paquete. mysqlclient no trae rueda para Linux: se compila, y sin estas
+      # librerias la auditoria se cae antes de auditar nada.
+      - name: Librerias de MySQL para mysqlclient
+        run: sudo apt-get update && sudo apt-get install -y default-libmysqlclient-dev pkg-config
+      # Rompe el build si una dependencia tiene una vulnerabilidad conocida.
+      - name: pip-audit
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt

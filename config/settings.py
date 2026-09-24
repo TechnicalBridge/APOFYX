@@ -62,6 +62,11 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    #  Con DEBUG=0 Django deja de servir los archivos estaticos: da por hecho
+    #  que delante hay un nginx. En el contenedor no lo hay, asi que WhiteNoise
+    #  los sirve desde el propio proceso. Va pegado a SecurityMiddleware, que
+    #  es donde su documentacion lo pide.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -154,9 +159,17 @@ STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+#  Con DEBUG=0, WhiteNoise sirve lo que dejo collectstatic en STATIC_ROOT y le
+#  agrega el hash del contenido al nombre de cada archivo, para que el
+#  navegador pueda guardarlos para siempre sin quedarse con una version vieja.
+#  En desarrollo se queda el almacenamiento simple, que no obliga a correr
+#  collectstatic despues de cada cambio en el CSS.
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
-    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage" if DEBUG
+        else "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    },
 }
 
 

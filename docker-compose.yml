@@ -7,7 +7,7 @@
 #      docker compose down                # detener, conservando los datos
 #      docker compose down -v             # detener Y BORRAR los datos
 #
-#  Cuando exista el proyecto Django, para levantar tambien la app:
+#  Para levantar tambien la aplicacion Django en su contenedor:
 #      docker compose --profile app up -d --build
 #
 #  La base queda expuesta en el puerto 3307 del host, NO en el 3306, para que
@@ -53,15 +53,18 @@ services:
 
   # ---------------------------------------------------------------------------
   #  Aplicacion Django.
-  #  Esta bajo el perfil "app" a proposito: hoy el proyecto Django todavia no
-  #  existe, asi que "docker compose up" levanta solo la base. Cuando este el
-  #  manage.py, se activa con:   docker compose --profile app up -d --build
+  #  Esta bajo el perfil "app" a proposito: para programar se levanta solo la
+  #  base y el runserver corre en la maquina, que recarga al guardar. La
+  #  aplicacion en contenedor es para desplegarla o para probarla entera en un
+  #  equipo que no tiene nada instalado:
+  #      docker compose --profile app up -d --build
   # ---------------------------------------------------------------------------
   web:
     profiles: ["app"]
     build:
       context: .
       dockerfile: Dockerfile
+    image: apofyx/web:1.0.0
     container_name: apofyx-web
     restart: unless-stopped
 
@@ -74,15 +77,38 @@ services:
       DB_USER:     ${MYSQL_USER:-apofyx_app}
       DB_PASSWORD: ${MYSQL_PASSWORD:-apofyx_pass}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-inseguro-cambiar}
-      DJANGO_DEBUG:      ${DJANGO_DEBUG:-1}
+      # Variable propia, y no DJANGO_DEBUG: el .env de desarrollo dice 1 y
+      # compose lo lee solo, asi que el contenedor terminaba mostrando la
+      # traza completa en cada error. Aca manda el 0 salvo que se pida otra
+      # cosa explicitamente.
+      DJANGO_DEBUG:      ${DJANGO_DEBUG_DOCKER:-0}
       GEMINI_API_KEY:    ${GEMINI_API_KEY:-}
+      # Si estan, el arranque crea el superusuario del panel. Si no, no.
+      DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME:-admin}
+      # La misma clave que trae .env.example: quien copie la plantilla y
+      # quien no tenga .env entran con la misma.
+      DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD:-apofyx2026}
+      DJANGO_SUPERUSER_EMAIL:    ${DJANGO_SUPERUSER_EMAIL:-admin@apofyx.cl}
+      # La cadena con DataBridge, apagada mientras no haya credenciales.
+      DATABRIDGE_URL:             ${DATABRIDGE_URL:-}
+      DATABRIDGE_CLAVE:           ${DATABRIDGE_CLAVE:-}
+      DATABRIDGE_SECRETO_EVENTOS: ${DATABRIDGE_SECRETO_EVENTOS:-}
 
     ports:
       - "${WEB_PORT:-8000}:8000"
 
-    volumes:
-      # Codigo montado en vivo: editar en el host recarga sin reconstruir.
-      - .:/app
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://127.0.0.1:8000/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      # El arranque espera a la base, migra y junta los estaticos antes de
+      # servir: hay que darle tiempo antes de declararlo enfermo.
+      start_period: 90s
+
+    deploy:
+      resources:
+        limits: { memory: 512M }
 
     depends_on:
       db:

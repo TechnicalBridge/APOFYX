@@ -8,8 +8,9 @@ __pycache__
 *.py[cod]
 *.log
 docs
-sql
-Dockerfile
+staticfiles
+sql/.respaldo-*.sql
+sql/.datos-*.sql
 docker-compose.yml
 .vscode
 .idea

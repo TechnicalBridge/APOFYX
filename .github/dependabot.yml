@@ -1,0 +1,27 @@
+# =============================================================================
+#  Dependencias vulnerables — Dependabot
+# =============================================================================
+#  Abre un pull request cuando una dependencia publica una version que corrige
+#  una vulnerabilidad. Django y mysqlclient son los que importan: uno sirve el
+#  sitio y el otro habla con la base.
+# =============================================================================
+version: 2
+
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: "deps" }
+
+  #  Las propias acciones de GitHub tambien son codigo de terceros que corre
+  #  con permisos sobre el repositorio.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    commit-message: { prefix: "deps(ci)" }
+
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: monthly }
+    commit-message: { prefix: "deps(docker)" }
