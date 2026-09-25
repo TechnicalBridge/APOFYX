@@ -191,12 +191,16 @@ def _campos_ignorados(payload):
 
 
 @transaction.atomic
-def recibir_cartera(creditor, payload, source=Batch.Source.API):
+def recibir_cartera(creditor, payload, source=Batch.Source.API, reenviar=True):
     """
     Procesa una Cartera v1 y devuelve la respuesta del contrato (§6.5).
 
     `creditor` sale de la credencial, no del cuerpo: un campo del cuerpo se
     puede falsificar, la clave no.
+
+    Con `reenviar=False` la cartera se recibe y no se le pasa a DataBridge. Es
+    para la demo (manage.py cargar_demo), que carga carteras que ya se
+    entregaron hace semanas.
     """
     if not isinstance(payload, dict):
         raise CarteraInvalida("cuerpo_invalido", "El cuerpo tiene que ser un objeto JSON")
@@ -307,8 +311,9 @@ def recibir_cartera(creditor, payload, source=Batch.Source.API):
     #  Si DataBridge esta configurado, la entrega queda en la bandeja para
     #  pasarsela. Dentro de esta misma transaccion: si la recepcion se
     #  deshace, el reenvio tambien.
-    from .reenvio import encolar
-    encolar(batch)
+    if reenviar:
+        from .reenvio import encolar
+        encolar(batch)
     return respuesta
 
 

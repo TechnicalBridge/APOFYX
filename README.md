@@ -90,9 +90,9 @@ cd APOFYX
 docker compose --profile app up -d --build --wait
 ```
 
-El contenedor espera a que la base responda, aplica las migraciones, junta los estáticos y crea
-el usuario del panel antes de servir la primera petición. `--wait` devuelve el control recién
-cuando está sano.
+El contenedor espera a que la base responda, aplica las migraciones, junta los estáticos, crea
+el usuario del panel y carga la [cartera de la demo](#la-cartera-de-la-demo) antes de servir la
+primera petición. `--wait` devuelve el control recién cuando está sano.
 
 | | |
 | --- | --- |
@@ -276,6 +276,40 @@ Cada evento se verifica con HMAC y se descarta si tiene más de 5 minutos. El mi
 veces se procesa una. Los eventos no llegan en orden garantizado, así que un aviso atrasado no
 reabre una deuda ya pagada.
 
+### La cartera de la demo
+
+Con Docker, APOFYX arranca con la cartera de Patrimonio ya cargada: nueve arrendatarios, cada uno
+en una situación distinta. Es la misma historia que cuentan los datos de ejemplo de Patrimonio y
+de DataBridge, vista desde acá.
+
+| Deudor | Qué pasó | Estado en APOFYX |
+| --- | --- | --- |
+| Felipe Rojas | Aceptó 6 cuotas y lleva 3 pagadas | En convenio de pago |
+| Valentina Soto | Debe un mes, y DataBridge cobra desde dos: no la tomó | En gestión |
+| Comercial Ñandú | Debe tres meses en UF | En gestión |
+| Tomás Fuentes | Pagó en la oficina y Patrimonio lo retiró | Retirada |
+| Rodrigo Pérez | Debe cuatro meses | En gestión |
+| Carolina Muñoz | Pagó todo de una vez | Pagada |
+| Panadería La Espiga | Aceptó 3 cuotas en UF y pagó la primera | En convenio de pago |
+| Ignacio Tapia | Dejó el departamento, aceptó 6 cuotas y no ha pagado ninguna | En convenio de pago |
+| Daniela Cáceres | Aceptó 3 cuotas y las pagó juntas | Pagada |
+
+Entra por el mismo código que una cartera de verdad: las dos entregas de Patrimonio (cortes del
+18 de agosto y del 18 de septiembre) pasan por `recibir_cartera`, y los 14 avisos de DataBridge
+por `recibir_evento`. Lo único distinto es que no se reenvía nada, porque es historia: ya
+ocurrió. Se ve en el admin, en *Deudas*, *Entregas recibidas*, *Reenvios a DataBridge* y
+*Eventos recibidos*.
+
+```powershell
+python manage.py cargar_demo                 # solo si Patrimonio no tiene cartera
+python manage.py cargar_demo --reemplazar    # cambia la que tenga por la de la demo
+```
+
+Sin `--reemplazar` nunca pisa nada: si Patrimonio ya entregó cartera, avisa y la deja como está.
+Con `--reemplazar` borra solo lo de Patrimonio (entregas, deudas, reenvíos y eventos); los
+deudores que también le deben a otro cliente se quedan. Para arrancar el contenedor sin demo:
+`DEMO_DATOS=false`.
+
 ---
 
 ## 7. Modelo de datos
@@ -333,8 +367,8 @@ script, hace falta `docker compose down -v` para que se vuelva a cargar.
 
 El contenedor **no corre como root** (usuario `apofyx`, uid 10001) y no usa `runserver`: sirve
 con **Gunicorn** y tres trabajadores. Antes de la primera petición, `docker-entrada.sh` espera a
-la base, corre `migrate --fake-initial`, junta los estáticos y crea el superusuario si le dieron
-las variables.
+la base, corre `migrate --fake-initial`, junta los estáticos, crea el superusuario si le dieron
+las variables y carga la cartera de la demo si `DEMO_DATOS` lo pide.
 
 ### Variables de entorno
 
@@ -349,6 +383,7 @@ documentadas en [`.env.example`](.env.example).
 | `DJANGO_SUPERUSER_USERNAME`, `DJANGO_SUPERUSER_PASSWORD` | `admin` / `apofyx2026` | El usuario del panel. Se crea al arrancar si no existe. Es la misma clave que trae `.env.example` |
 | `WEB_PORT` | `8000` | Dónde queda el sitio |
 | `DATABRIDGE_URL`, `DATABRIDGE_CLAVE`, `DATABRIDGE_SECRETO_EVENTOS` | vacías | La cadena con DataBridge. Sin ellas APOFYX trabaja solo |
+| `DEMO_DATOS` | `true` | Carga al arrancar la [cartera de la demo](#la-cartera-de-la-demo). Solo entra si Patrimonio no tiene cartera |
 | `GEMINI_API_KEY` | vacía | El respaldo del asistente. Sin ella, responde con reglas |
 
 **Los valores por omisión son de desarrollo y están escritos en un archivo público.**
@@ -361,14 +396,14 @@ documentadas en [`.env.example`](.env.example).
 python manage.py test
 ```
 
-**272 pruebas y 89% de cobertura**, contra MySQL de verdad. Django crea una base aparte
+**283 pruebas y 90% de cobertura**, contra MySQL de verdad. Django crea una base aparte
 (`test_apofyx`) y la borra al terminar; el permiso para hacerlo lo otorga la Parte 5 de
 `sql/AphofyxDB.sql`.
 
 | Tipo | Qué cubre |
 | --- | --- |
 | **Unitarias** | El motor del asistente, el cálculo de mora y tramo, el módulo 11 del RUT, la firma HMAC de los eventos, los formularios |
-| **De integración** | Las vistas del sitio y del panel, la ingesta de cartera completa (aceptación parcial, idempotencia, retiros), el reenvío a DataBridge con su bandeja de salida |
+| **De integración** | Las vistas del sitio y del panel, la ingesta de cartera completa (aceptación parcial, idempotencia, retiros), el reenvío a DataBridge con su bandeja de salida, la cartera de la demo |
 | **De esquema** | Comparan `sql/AphofyxDB.sql` con los modelos: si un `ENUM` del DDL y las opciones del modelo dejan de decir lo mismo, la prueba falla. Es la única forma de detectar esa separación, porque Django arma la base de pruebas desde las migraciones y no desde el DDL |
 
 Ninguna prueba llama a la API de Gemini: el respaldo con modelo se simula. Lo que se verifica no

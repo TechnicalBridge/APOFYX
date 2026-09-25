@@ -93,6 +93,9 @@ services:
       DATABRIDGE_URL:             ${DATABRIDGE_URL:-}
       DATABRIDGE_CLAVE:           ${DATABRIDGE_CLAVE:-}
       DATABRIDGE_SECRETO_EVENTOS: ${DATABRIDGE_SECRETO_EVENTOS:-}
+      # La cartera de Patrimonio de la demo (manage.py cargar_demo). Solo
+      # entra si Patrimonio no tiene cartera todavia. false para partir sin ella.
+      DEMO_DATOS: ${DEMO_DATOS:-true}
 
     ports:
       - "${WEB_PORT:-8000}:8000"

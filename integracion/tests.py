@@ -933,3 +933,140 @@ class ElLoteProcesadoSeAnota(TestCase):
         })
         self.assertEqual(respuesta["resultado"], "anotado")
         self.assertEqual(InboundEvent.objects.get().type, "lote.procesado")
+
+
+# ==========================================================================
+#  La historia de la demo (manage.py cargar_demo)
+# ==========================================================================
+
+from io import StringIO  # noqa: E402
+
+from django.core.management import call_command  # noqa: E402
+from django.core.management.base import CommandError  # noqa: E402
+from django.utils.timezone import localtime  # noqa: E402
+
+from .intake import huella  # noqa: E402
+
+
+def cargar_demo(**opciones):
+    salida = StringIO()
+    call_command("cargar_demo", stdout=salida, **opciones)
+    return salida.getvalue()
+
+
+#  Con DataBridge configurado y Patrimonio suscrito: si la demo reenviara algo,
+#  aca se notaria.
+@override_settings(DATABRIDGE=CON_EVENTOS)
+class LaDemoCuentaLaMismaHistoriaQueDataBridge(TestCase):
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        Subscription.registrar(self.acreedor, "http://patrimonio.prueba/api/eventos")
+        cargar_demo()
+
+    def deuda(self, id_externo):
+        return Debt.objects.get(creditor=self.acreedor, external_id=id_externo)
+
+    def test_cada_deudor_queda_en_su_situacion(self):
+        self.assertEqual(dict(Debt.objects.values_list("external_id", "status")), {
+            "CTR-2025-014": Debt.Status.REPACTED,    # Felipe: 3 de 6 cuotas pagadas
+            "CTR-2026-031": Debt.Status.OPEN,        # Valentina: DataBridge no la tomo
+            "CTR-2024-007": Debt.Status.OPEN,        # Comercial Nandu
+            "CTR-2025-022": Debt.Status.WITHDRAWN,   # Tomas pago en la oficina
+            "CTR-2025-019": Debt.Status.OPEN,        # Rodrigo
+            "CTR-2026-012": Debt.Status.PAID,        # Carolina
+            "CTR-2024-019": Debt.Status.REPACTED,    # La Espiga
+            "CTR-2025-027": Debt.Status.REPACTED,    # Ignacio, el convenio en riesgo
+            "CTR-2026-015": Debt.Status.PAID,        # Daniela
+        })
+
+    def test_la_cartera_es_la_que_mando_patrimonio(self):
+        rodrigo = self.deuda("CTR-2025-019")
+        self.assertEqual((rodrigo.charges.count(), rodrigo.saldo), (4, Decimal("1800000")))
+        self.assertEqual(self.deuda("CTR-2024-019").saldo, Decimal("72"))
+        self.assertEqual(self.deuda("CTR-2025-022").withdrawn_reason, "pago_directo")
+        #  El contrato de Ignacio termino en agosto: no volvio en septiembre.
+        self.assertEqual(self.deuda("CTR-2025-027").last_batch.external_id, "PAT-2026-08-18-01")
+        self.assertEqual(self.deuda("CTR-2026-031").first_batch.external_id, "PAT-2026-09-18-01")
+
+    def test_las_dos_carteras_se_le_pasaron_a_databridge(self):
+        reenvios = {f.batch.external_id: f for f in Forward.objects.select_related("batch__campaign")}
+        agosto, septiembre = reenvios["PAT-2026-08-18-01"], reenvios["PAT-2026-09-18-01"]
+        self.assertEqual({agosto.status, septiembre.status}, {Forward.Status.SENT})
+        self.assertEqual((agosto.external_id, septiembre.external_id), ("APX-2026-08-19-003", "APX-2026-09-19-004"))
+        self.assertEqual((agosto.response["aceptadas"], agosto.response["rechazadas"]), (6, 2))
+        self.assertEqual((septiembre.response["aceptadas"], septiembre.response["rechazadas"]), (7, 1))
+        self.assertEqual(agosto.batch.campaign.status, Campaign.Status.FINISHED)
+        self.assertEqual(septiembre.batch.campaign.name, "Patrimonio - Arriendos - Septiembre 2026")
+
+    def test_los_avisos_quedan_como_rastro(self):
+        avisos = InboundEvent.objects.filter(debt=self.deuda("CTR-2026-015")).order_by("occurred_at", "pk")
+        self.assertEqual([a.result for a in avisos], [
+            "en gestion -> en convenio de pago", "pago anotado", "en convenio de pago -> pagada",
+        ])
+        self.assertEqual(InboundEvent.objects.count(), 14)
+
+    def test_no_le_avisa_a_nadie(self):
+        self.assertEqual(OutboundEvent.objects.count(), 0)
+        self.assertFalse(Forward.objects.exclude(status=Forward.Status.SENT).exists())
+
+    def test_cada_cosa_lleva_la_fecha_en_que_paso(self):
+        felipe = self.deuda("CTR-2025-014")
+        self.assertEqual(localtime(felipe.created_at).date(), _date(2026, 8, 18))
+        self.assertEqual(localtime(felipe.updated_at).date(), _date(2026, 9, 20))   # acepto el convenio
+        self.assertEqual(localtime(Batch.objects.get(external_id="PAT-2026-09-18-01").received_at).date(),
+                         _date(2026, 9, 18))
+        self.assertEqual(localtime(Forward.objects.get(external_id="APX-2026-08-19-003").sent_at).date(),
+                         _date(2026, 8, 19))
+        aviso = InboundEvent.objects.get(type="deuda.saldada", debt=self.deuda("CTR-2026-012"))
+        self.assertEqual((aviso.received_at - aviso.occurred_at).total_seconds(), 4)
+
+    def test_cargarla_otra_vez_no_cambia_nada(self):
+        antes = (Batch.objects.count(), Debt.objects.count(), InboundEvent.objects.count())
+        self.assertIn("ya estaba cargada", cargar_demo())
+        self.assertEqual((Batch.objects.count(), Debt.objects.count(), InboundEvent.objects.count()), antes)
+
+    def test_reemplazar_la_devuelve_al_comienzo(self):
+        """Despues de jugar con ella en la cadena, --reemplazar la deja como era."""
+        recibir_evento(evento_de_databridge("deuda.saldada", deuda="CTR-2025-019"))
+        self.assertEqual(self.deuda("CTR-2025-019").status, Debt.Status.PAID)
+
+        cargar_demo(reemplazar=True)
+
+        self.assertEqual(self.deuda("CTR-2025-019").status, Debt.Status.OPEN)
+        self.assertEqual((Batch.objects.count(), InboundEvent.objects.count()), (2, 14))
+
+
+class LaDemoNoPisaUnaCarteraReal(TestCase):
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+
+    def test_si_patrimonio_ya_entrego_cartera_no_se_toca(self):
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+        salida = cargar_demo()
+
+        self.assertIn("--reemplazar", salida)
+        self.assertEqual(Batch.objects.get().payload_hash, huella(cartera_de_ejemplo()))
+
+    def test_reemplazar_borra_solo_lo_de_patrimonio(self):
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        otro = crear_acreedor("77812341-K", "Otro Acreedor")
+        suya = cartera_de_ejemplo()
+        suya["lote"]["id_externo"] = "OTRO-2026-09-01"
+        suya["lote"]["acreedor"]["rut"] = "77812341-K"
+        suya["deudas"] = [suya["deudas"][0]]      # Felipe tambien le debe a otro
+        recibir_cartera(otro, suya)
+
+        cargar_demo(reemplazar=True)
+
+        self.assertEqual(Debt.objects.filter(creditor=otro).count(), 1)
+        self.assertEqual(Debtor.objects.filter(tax_id="16482337-7").count(), 1)
+        self.assertEqual(set(Batch.objects.filter(creditor=self.acreedor).values_list("external_id", flat=True)),
+                         {"PAT-2026-08-18-01", "PAT-2026-09-18-01"})
+
+    def test_sin_patrimonio_entre_los_clientes_no_hay_demo(self):
+        self.acreedor.delete()
+        with self.assertRaises(CommandError):
+            cargar_demo()

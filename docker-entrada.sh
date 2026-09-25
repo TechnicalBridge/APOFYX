@@ -60,4 +60,14 @@ else:
 "
 fi
 
+#  La cartera de la demo: la de Patrimonio, con cada deudor en una situacion
+#  distinta (manage.py cargar_demo). Solo entra si Patrimonio no tiene cartera,
+#  asi que reiniciar el contenedor no pisa nada. Si no se puede cargar, APOFYX
+#  arranca igual.
+case "$(printf '%s' "${DEMO_DATOS:-false}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on)
+        python manage.py cargar_demo || echo "APOFYX: la demo no se pudo cargar; sigue sin ella." >&2
+        ;;
+esac
+
 exec "$@"

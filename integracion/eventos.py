@@ -93,8 +93,14 @@ def firma_valida(secreto, marca, firma, cuerpo, ahora=None):
 #  Recibir
 # ---------------------------------------------------------------------------
 
-def recibir_evento(evento):
-    """Guarda el evento, pone al dia la deuda y lo deja listo para el cliente."""
+def recibir_evento(evento, reenviar=True):
+    """
+    Guarda el evento, pone al dia la deuda y lo deja listo para el cliente.
+
+    Con `reenviar=False` no se le avisa al cliente. Es para la demo, que carga
+    eventos de dias pasados: avisarlos hoy seria contarle al cliente algo que,
+    en la historia, ya supo.
+    """
     if not isinstance(evento, dict) or not evento.get("id") or not evento.get("tipo"):
         raise EventoInvalido("Al evento le falta id o tipo")
     datos = evento.get("datos") if isinstance(evento.get("datos"), dict) else {}
@@ -119,7 +125,7 @@ def recibir_evento(evento):
             payload=evento,
             result=resultado[:80],
         )
-        avisados = _encolar_para_el_cliente(recibido, evento, acreedor, deuda)
+        avisados = _encolar_para_el_cliente(recibido, evento, acreedor, deuda) if reenviar else 0
 
     return {"repetido": False, "resultado": resultado, "avisados": avisados}
 
