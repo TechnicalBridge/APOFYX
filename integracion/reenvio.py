@@ -57,10 +57,11 @@ def encolar(batch):
     Anota la entrega para reenviarla. Se llama dentro de la transaccion que
     la recibio, asi que si la recepcion se deshace, el reenvio tambien.
 
-    Solo se reenvia lo que tiene algo que reenviar: una entrega totalmente
-    rechazada no le interesa a DataBridge.
+    Solo se reenvia lo que tiene algo que reenviar: una entrega que no cambio
+    ninguna deuda no le interesa a DataBridge. Una que solo devolvio un caso
+    fuera de mandato si: ese retiro es lo que DataBridge tiene que saber.
     """
-    if not configurado() or batch.accepted_count == 0:
+    if not configurado() or not batch.debts_updated.exists():
         return None
     forward, _ = Forward.objects.get_or_create(
         batch=batch,

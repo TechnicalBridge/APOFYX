@@ -1,4 +1,5 @@
 {% extends "panel/base_panel.html" %}
+{% load cifras %}
 
 {% block titulo_panel %}Clientes{% endblock %}
 {% block rotulo %}Clientes{% endblock %}
@@ -58,7 +59,7 @@
                 <td class="ap-mono">{{ empresa.rut_formateado }}</td>
                 <td>{{ empresa.industry.name }}</td>
                 <td class="ap-num">{{ empresa.cartera.registros|default:"—" }}</td>
-                <td class="ap-num">{% if empresa.cartera.ticket %}${{ empresa.cartera.ticket|floatformat:0 }}{% else %}—{% endif %}</td>
+                <td class="ap-num">{% if empresa.cartera.ticket %}{{ empresa.cartera.ticket|pesos }}{% else %}—{% endif %}</td>
                 <td><span class="ap-estado ap-estado--{{ empresa.status }}">{{ empresa.get_status_display }}</span></td>
             </tr>
             {% empty %}

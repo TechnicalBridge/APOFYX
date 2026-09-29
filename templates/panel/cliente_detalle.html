@@ -1,4 +1,5 @@
 {% extends "panel/base_panel.html" %}
+{% load cifras %}
 
 {% block titulo_panel %}{{ empresa.trade_name }}{% endblock %}
 {% block rotulo %}Clientes / ficha{% endblock %}
@@ -78,14 +79,16 @@
             {% endif %}
         </h2>
 
-        {% if empresa.cartera.registros %}
+        {% if recibida %}
+        {% include "panel/_cartera_recibida.html" %}
+        {% elif empresa.cartera.registros %}
         <div class="ap-kpis ap-kpis--dos mb-4">
             <div class="ap-kpi">
                 <span class="ap-kpi__valor">{{ empresa.cartera.registros }}</span>
                 <span class="ap-kpi__texto">Deudores en gestión</span>
             </div>
             <div class="ap-kpi">
-                <span class="ap-kpi__valor">${{ empresa.cartera.ticket|floatformat:0 }}</span>
+                <span class="ap-kpi__valor">{{ empresa.cartera.ticket|pesos }}</span>
                 <span class="ap-kpi__texto">Ticket medio ponderado</span>
             </div>
         </div>
@@ -99,7 +102,7 @@
                 <tr>
                     <td>{{ tramo.get_overdue_bracket_display }}</td>
                     <td class="ap-num">{{ tramo.debtor_count }}</td>
-                    <td class="ap-num">${{ tramo.average_debt_clp|floatformat:0 }}</td>
+                    <td class="ap-num">{{ tramo.average_debt_clp|pesos }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

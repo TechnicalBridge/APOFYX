@@ -5,6 +5,14 @@
 Sitio corporativo y panel de una empresa de cobranza extrajudicial. Proyecto de Capstone; la
 empresa, los datos y las cifras son ficticios.
 
+**Origen del caso:** Kobra fue el cliente directo original del equipo y se retiró. APOFYX es
+el cliente ficticio creado para continuar el Capstone, no un nuevo cliente real. Esta
+aplicación representa su operación de cobranza dentro de la cadena con Patrimonio y DataBridge.
+
+La [evaluación local al final de este README](#evaluación-local-del-29-de-septiembre-de-2026)
+resume las pruebas ejecutadas y los pendientes. La [evaluación general](../EVALUACION_GENERAL.md)
+conecta los tres proyectos cuando se conservan juntos en la carpeta Capstone.
+
 **Se levanta con una orden** y queda en http://127.0.0.1:8000 — solo hace falta Docker:
 
 ```powershell
@@ -32,10 +40,11 @@ tramo de cada deuda, la reparte en campañas, y se la pasa a la plataforma de pa
 deudor pueda pagar solo. Cuando alguien paga, el aviso vuelve y APOFYX pone la cartera al día y
 se lo reporta al acreedor.
 
-**APOFYX es puramente operacional.** No procesa pagos y no tiene inteligencia artificial
-propia: lo que hace es ordenar carteras, mandar mensajes con plantillas y reportar. La IA y el
-gestor de pagos los aporta **DataBridge**. Esa frontera es lo más importante del proyecto y está
-explicada en [`docs/APOFYX.md`](docs/APOFYX.md), §7.3 y §13.
+**APOFYX cumple el papel operacional.** No procesa pagos: ordena carteras, gestiona campañas
+y reporta. El procesamiento de pagos y el asistente del deudor viven en **DataBridge**.
+Este repositorio sí implementa el asistente de su propio sitio en `assistant/`, con reglas y
+Gemini opcional; no hay un modelo predictivo de cobranza entrenado aquí. La atribución comercial
+de la tecnología se explica en [`docs/APOFYX.md`](docs/APOFYX.md), §7.3 y §13.
 
 ### A quién va dirigido
 
@@ -163,7 +172,7 @@ En este repositorio, de DevOps se tomaron tres cosas:
 
 | Práctica | Qué resuelve |
 | --- | --- |
-| **Integración continua** | GitHub Actions levanta MySQL 8.4, **carga el esquema desde el DDL, lo migra con Django y corre las 272 pruebas** en cada push. Si una migración no funciona sobre una base recién creada, la CI se cae |
+| **Integración continua** | GitHub Actions levanta MySQL 8.4, **carga el esquema desde el DDL, lo migra con Django y corre las 295 pruebas** en cada push. Si una migración no funciona sobre una base recién creada, la CI se cae |
 | **El esquema es la fuente** | `sql/AphofyxDB.sql` se escribe a mano y los modelos son su espejo. Hay pruebas que comparan los dos y fallan si se separan |
 | **Infraestructura como código** | Docker Compose levanta la base ya poblada; nadie tiene que "instalar MySQL y correr este script" |
 
@@ -247,6 +256,21 @@ tareas: así la recepción queda completamente separada de DataBridge.
 
 Una entrega necesita campaña. Si el acreedor tiene exactamente una en curso, se usa esa; con cero
 o con varias queda **esperando campaña** hasta que alguien la asigne en el panel.
+
+### El mes siguiente
+
+El acreedor vuelve a mandar cada mes a todos sus morosos. Dos casos cambian de estado solos:
+
+- **Una deuda pagada vuelve a gestión** si el deudor se atrasa otra vez en el mismo contrato,
+  siempre que todos los cargos sean posteriores a los que se pagaron. Si trae cargos viejos, se
+  rechaza: lo pagado no se vuelve a cobrar.
+- **Una deuda con más de 120 días de mora sale del mandato.** APOFYX la devuelve al acreedor
+  (queda retirada, con motivo `fuera_de_mandato`), se lo dice en la respuesta de esa entrega y le
+  pasa el retiro a DataBridge para que deje de cobrarla.
+
+En el panel, el detalle de cada cliente muestra la cartera que entregó por la integración: sus
+entregas, cuántas se aceptaron y en qué quedó el reenvío a DataBridge, y cada deuda con su estado
+y su mora al último corte.
 
 ### Los eventos de vuelta
 
@@ -396,14 +420,15 @@ documentadas en [`.env.example`](.env.example).
 python manage.py test
 ```
 
-**283 pruebas y 90% de cobertura**, contra MySQL de verdad. Django crea una base aparte
+**295 pruebas**, verificadas nuevamente el 29-09-2026 contra MySQL. El **90% de cobertura**
+corresponde a una medición anterior; no se recalculó en esta revisión. Django crea una base aparte
 (`test_apofyx`) y la borra al terminar; el permiso para hacerlo lo otorga la Parte 5 de
 `sql/AphofyxDB.sql`.
 
 | Tipo | Qué cubre |
 | --- | --- |
 | **Unitarias** | El motor del asistente, el cálculo de mora y tramo, el módulo 11 del RUT, la firma HMAC de los eventos, los formularios |
-| **De integración** | Las vistas del sitio y del panel, la ingesta de cartera completa (aceptación parcial, idempotencia, retiros), el reenvío a DataBridge con su bandeja de salida, la cartera de la demo |
+| **De integración** | Las vistas del sitio y del panel, la ingesta de cartera completa (aceptación parcial, idempotencia, retiros), el reenvío a DataBridge con su bandeja de salida, la reapertura de una deuda pagada y la devolución por mora, la cartera recibida en el panel, la cartera de la demo |
 | **De esquema** | Comparan `sql/AphofyxDB.sql` con los modelos: si un `ENUM` del DDL y las opciones del modelo dejan de decir lo mismo, la prueba falla. Es la única forma de detectar esa separación, porque Django arma la base de pruebas desde las migraciones y no desde el DDL |
 
 Ninguna prueba llama a la API de Gemini: el respaldo con modelo se simula. Lo que se verifica no
@@ -431,9 +456,20 @@ python manage.py exportar_features --acreedor 76418902-7 --salida cartera.csv
 ```python
 import pandas as pd
 datos = pd.read_csv("cartera.csv")
-X = datos.drop(columns=["deuda_id", "acreedor_id", "campana_id", "estado_pagada"])
+# Selección preliminar. Antes de entrenar hacen falta observaciones temporales.
+estados = [columna for columna in datos.columns if columna.startswith("estado_")]
+X = datos.drop(columns=["deuda_id", "acreedor_id", "campana_id", *estados,
+                       "eventos_recibidos", "intentos_de_contacto"])
 y = datos["estado_pagada"]
 ```
+
+**Límite del ejemplo:** quitar únicamente `estado_pagada` produce fuga de información: las
+otras columnas `estado_*` describen el mismo estado y permiten inferir la etiqueta. Los eventos
+y contactos acumulados también pueden contener información posterior al momento de predicción.
+La selección anterior evita esos campos, pero no convierte una fotografía del estado actual en
+un dataset predictivo validado. Para predecir pagos futuros hay que definir fecha de observación,
+horizonte de resultado, variables disponibles en esa fecha y separación temporal de evaluación.
+Los datos de demo sirven para probar la exportación, no para afirmar rendimiento real de un modelo.
 
 | Qué | Cómo se codifica | Por qué |
 | --- | --- | --- |
@@ -477,3 +513,76 @@ decisiones de diseño con su justificación.
 Este repositorio es una de tres piezas:
 [**Patrimonio Inmuebles**](https://github.com/TechnicalBridge/patrimonioinmuebles) → **APOFYX** →
 [**DataBridge**](https://github.com/TechnicalBridge/TB_web).
+
+## Evaluación local del 29 de septiembre de 2026
+
+### Estado y evidencia
+
+APOFYX tiene implementado el recorrido operacional del cliente ficticio: sitio, panel, clientes
+acreedores, campañas, recepción de cartera y comunicación con DataBridge. Su alcance excluye
+procesar dinero y acreditar mejoras de cobranza con datos reales.
+
+| Comprobación | Resultado |
+| --- | --- |
+| Suite Django | **295 pruebas aprobadas**, sin fallos ni errores |
+| Motor de prueba | MySQL 8.4, base con nombre temporal único, eliminada al finalizar |
+| Entorno utilizado | Python 3.14.3 y Django 6.1.1 del entorno local |
+| Configuración Docker | `docker compose --profile app config --quiet` correcto |
+| Aplicación existente | Sitio en 8000 respondió HTTP 200; contenedores existentes saludables |
+| Cobertura / servicios externos | Cobertura no recalculada; Gemini simulado en pruebas |
+
+El despliegue existente no se reconstruyó. Su estado de salud no demuestra que la imagen contenga
+todos los cambios del código local. La suite emitió una advertencia por `staticfiles/` ausente
+en el entorno local, sin afectar el resultado; el contenedor ejecuta `collectstatic` al iniciar.
+
+### Fortalezas comprobables
+
+- `integracion/intake.py` y `integracion/reenvio.py` separan la aceptación del acreedor de la
+  entrega posterior a DataBridge. Una caída del destino puede quedar registrada para reintento.
+- La respuesta por deuda y las pruebas de cartera permiten distinguir lo recibido, lo rechazado
+  y lo retirado, en lugar de considerar exitoso todo el lote por obtener HTTP 200.
+- `integracion/eventos.py` verifica y aplica los eventos con deduplicación; los modelos conservan
+  el estado de los envíos y los errores de entrega.
+- El DDL y las migraciones cuentan con verificaciones de coherencia. Las tablas de pagos no
+  forman parte de la responsabilidad de esta aplicación.
+- El motor conversacional tiene una respuesta local cuando el proveedor externo no está
+  configurado o falla. No necesita un LLM para arrancar.
+
+### Operación que debe quedar explícita
+
+La bandeja de salida necesita un ejecutor. `Dockerfile`, `docker-compose.yml` y
+`docker-entrada.sh` no incluyen un proceso que programe los reintentos. El comando existente
+procesa carteras y eventos pendientes:
+
+```powershell
+# Desde APOFYX, con el entorno y las conexiones configuradas.
+.venv\Scripts\python.exe manage.py despachar_reenvios
+```
+
+Para recuperación automática debe programarse periódicamente y supervisarse su resultado.
+Ejecutarlo manualmente es una acción de entrega hacia los sistemas configurados, no una consulta
+de estado. La evaluación no lo ejecutó sobre las conexiones del usuario.
+
+| Situación | Qué revisar |
+| --- | --- |
+| Cartera aceptada pero ausente en DataBridge | Variables `DATABRIDGE_*`, campaña asignada y estado del reenvío |
+| Entrega esperando campaña | Que exista una campaña aplicable o se asigne desde el panel |
+| Eventos rechazados | Secreto de la suscripción, reloj de los sistemas y cuerpo firmado |
+| Pendientes después de una caída | Ejecutor de `despachar_reenvios`, próximo intento y error almacenado |
+| Cambios de esquema | DDL, migraciones y respaldo; no reinicializar una base con datos útiles |
+
+### Pendientes priorizados
+
+1. Programar y demostrar los reintentos con una caída y recuperación del destino en un entorno
+   separado. El registro persistente está implementado; falta cerrar su operación periódica.
+2. Mantener el uso analítico de `v_deuda_features` separado de una futura predicción. La fuga de
+   estados se aclara en §10; el comentario del comando `exportar_features.py` aún contiene el
+   ejemplo anterior y deberá alinearse cuando se trabaje sobre el código.
+3. Completar los roles actuales del equipo en §4, sin confundir responsabilidades técnicas con
+   actores ficticios del caso.
+4. Antes de un despliegue público, configurar secretos, hosts permitidos, depuración, protección
+   de secretos HMAC y respaldo/retención. Los valores por omisión corresponden a la demo.
+5. Mantener `docs/APOFYX.md` como documento del caso y actualizar sus apartados históricos de
+   implementación para que coincidan con el código ya construido.
+
+Esta evaluación es local y técnica. La bitácora `Technical-Bridge/` queda fuera de su alcance.

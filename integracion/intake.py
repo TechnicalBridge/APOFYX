@@ -14,6 +14,10 @@ DOS PRINCIPIOS QUE EXPLICAN CASI TODO EL ARCHIVO
 2. **Idempotencia.** El mismo lote enviado dos veces devuelve la misma
    respuesta sin volver a procesar nada. El mismo id con otro contenido se
    rechaza: un numero de lote no se reutiliza.
+
+Y dos reglas del mes siguiente, cuando el acreedor vuelve a mandar una deuda
+que APOFYX ya tiene: una pagada vuelve a cobranza solo con cargos posteriores a
+los que se pagaron, y una que paso la mora del mandato se devuelve.
 """
 
 import hashlib
@@ -30,7 +34,7 @@ from crm.rut import es_valido, normalizar
 #  es de APOFYX, no del contrato: otra agencia podria usar otro.
 MORA_MAXIMA_DIAS = 120
 
-MOTIVOS_DE_RETIRO = {"pago_directo", "acuerdo_directo", "error", "disputa_resuelta", "otro"}
+MOTIVOS_DE_RETIRO = {"pago_directo", "acuerdo_directo", "error", "disputa_resuelta", "fuera_de_mandato", "otro"}
 
 CAMPOS_DEUDA = {
     "id_externo", "accion", "motivo_retiro", "deudor", "moneda", "concepto",
@@ -258,17 +262,28 @@ def recibir_cartera(creditor, payload, source=Batch.Source.API, reenviar=True):
         if id_deuda:
             vistos.add(id_deuda)
         if errores:
+            fuera = next((e for e in errores if e["codigo"] == "mora_fuera_de_mandato"), None)
+            if fuera and _devolver(creditor, batch, id_deuda):
+                fuera["mensaje"] += ". APOFYX la saca de su cartera y deja de cobrarla"
             resultados.append({"id_externo": id_deuda, "resultado": "rechazada", "errores": errores})
             continue
 
         existente = Debt.objects.filter(creditor=creditor, external_id=id_deuda).first()
         if existente and existente.status == Debt.Status.PAID:
-            resultados.append({
-                "id_externo": id_deuda, "resultado": "rechazada",
-                "errores": [_error("id_externo", "deuda_saldada",
-                                   "Esa deuda ya se pago y no se puede modificar")],
-            })
-            continue
+            #  Vuelve a cobranza solo si el deudor se volvio a atrasar: con alguno
+            #  de los cargos que ya se pagaron seria cobrarle dos veces.
+            if datos["accion"] == "retirar":
+                motivo = "Esa deuda ya se pago y no se puede modificar"
+            elif not _solo_cargos_nuevos(existente, datos["cargos"]):
+                motivo = "Esa deuda ya se pago: vuelve a cobranza solo con cargos posteriores a los que se pagaron"
+            else:
+                motivo = None
+            if motivo:
+                resultados.append({
+                    "id_externo": id_deuda, "resultado": "rechazada",
+                    "errores": [_error("id_externo", "deuda_saldada", motivo)],
+                })
+                continue
 
         if datos["accion"] == "retirar":
             if not existente:
@@ -318,6 +333,29 @@ def recibir_cartera(creditor, payload, source=Batch.Source.API, reenviar=True):
 
 
 SE_CONSERVAN = (Debt.Status.OPEN, Debt.Status.REPACTED, Debt.Status.DISPUTED)
+
+
+def _solo_cargos_nuevos(deuda, cargos):
+    """Si todos los cargos vencen despues del ultimo que tenia la deuda cuando se pago."""
+    ultimo = deuda.charges.order_by("-due_date").values_list("due_date", flat=True).first()
+    return ultimo is None or all(c["vence"] > ultimo for c in cargos)
+
+
+def _devolver(creditor, batch, id_deuda):
+    """
+    Una deuda que ya estaba en gestion y paso la mora del mandato vuelve al
+    acreedor (docs §2.2): APOFYX la retira de su cartera, y el retiro le llega
+    a DataBridge con el reenvio de esta misma entrega, para que deje de
+    cobrarla. Devuelve si habia algo que devolver.
+    """
+    deuda = Debt.objects.filter(creditor=creditor, external_id=id_deuda, status__in=SE_CONSERVAN).first()
+    if deuda is None:
+        return False
+    deuda.status = Debt.Status.WITHDRAWN
+    deuda.withdrawn_reason = "fuera_de_mandato"
+    deuda.last_batch = batch
+    deuda.save(update_fields=["status", "withdrawn_reason", "last_batch", "updated_at"])
+    return True
 
 
 def _guardar_deuda(creditor, batch, id_deuda, datos, existente):

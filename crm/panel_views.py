@@ -2,20 +2,23 @@
 Panel interno de APOFYX.
 
 Lo unico que administra son los clientes B2B: sus datos, su cartera entregada y
-el rendimiento de sus campanas. No hay deudores ni pagos, porque APOFYX no los
-toca (docs seccion 2.2).
+el rendimiento de sus campanas. Pagos no hay: el dinero lo mueve DataBridge, y a
+APOFYX le llega el aviso (docs seccion 2.2).
 
 Todas las vistas exigen sesion iniciada.
 """
 
+from collections import Counter
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Max, Q, Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from assistant.models import Conversation, Message
+from cartera.models import Batch, Debt, DebtCharge
 from .forms import CreditorContactForm, CreditorForm
 from .models import (
     Campaign, CampaignFunnelSnapshot, Creditor, CreditorContact, Industry, Lead,
@@ -24,6 +27,31 @@ from .models import (
 # Cuantas filas por pagina en los listados. Con la cartera de demostracion no
 # se nota, pero sin tope una base real dejaria la pagina inservible.
 POR_PAGINA = 25
+
+#  Las deudas que APOFYX esta cobrando: las otras ya se pagaron o volvieron al acreedor.
+EN_GESTION = (Debt.Status.OPEN, Debt.Status.REPACTED, Debt.Status.DISPUTED)
+
+#  Como se nombran en el panel, con tilde (las etiquetas del modelo van sin): en
+#  plural para los totales, en singular para cada deuda.
+ESTADOS_EN_PANEL = [
+    (Debt.Status.OPEN, "En gestión"),
+    (Debt.Status.REPACTED, "En convenio"),
+    (Debt.Status.PAID, "Pagadas"),
+    (Debt.Status.WITHDRAWN, "Retiradas o devueltas"),
+]
+ESTADO_DE_UNA = {
+    Debt.Status.OPEN: "En gestión",
+    Debt.Status.REPACTED: "En convenio",
+    Debt.Status.PAID: "Pagada",
+    Debt.Status.DISPUTED: "Disputada",
+}
+
+
+def estado_de(deuda):
+    """El estado de una deuda en el panel. Una devuelta por mora se distingue de una que retiro el acreedor."""
+    if deuda.status == Debt.Status.WITHDRAWN:
+        return "Devuelta" if deuda.withdrawn_reason == "fuera_de_mandato" else "Retirada"
+    return ESTADO_DE_UNA.get(deuda.status, deuda.get_status_display())
 
 
 def adjuntar_cartera(empresas):
@@ -55,7 +83,65 @@ def adjuntar_cartera(empresas):
             "periodo": ultimo,
             "tramos": sorted(del_periodo, key=lambda t: t.overdue_bracket),
         }
+
+    #  Un cliente que entrega por la integracion no tiene cortes mensuales: su
+    #  cartera es la que llego, deuda por deuda. Dos consultas para toda la
+    #  pagina, no dos por empresa.
+    por_api = [e for e in empresas if e.cartera["periodo"] is None]
+    if por_api:
+        vivas = {fila["creditor_id"]: fila for fila in (
+            Debt.objects.filter(creditor__in=por_api, status__in=EN_GESTION)
+            .values("creditor_id").annotate(registros=Count("id"), corte=Max("last_batch__cut_off")))}
+        #  El ticket, sobre las deudas en pesos: un promedio que mezclara pesos
+        #  con UF no significaria nada.
+        pesos = {fila["debt__creditor_id"]: fila["total"] / fila["deudas"] for fila in (
+            DebtCharge.objects.filter(debt__creditor__in=por_api, debt__status__in=EN_GESTION,
+                                      debt__currency=Debt.Currency.CLP)
+            .values("debt__creditor_id").annotate(total=Sum("amount"), deudas=Count("debt", distinct=True)))}
+        for empresa in por_api:
+            fila = vivas.get(empresa.pk)
+            if fila:
+                empresa.cartera = {"registros": fila["registros"], "ticket": pesos.get(empresa.pk, 0),
+                                   "periodo": fila["corte"], "tramos": []}
     return empresas
+
+
+def cartera_recibida(empresa):
+    """
+    La cartera que el cliente entrego por la integracion: sus entregas, que
+    paso con cada deuda y cuanto queda por cobrar. None si nunca entrego asi.
+    """
+    entregas = list(Batch.objects.filter(creditor=empresa).select_related("forward").order_by("-cut_off", "-id")[:6])
+    if not entregas:
+        return None
+    deudas = (Debt.objects.filter(creditor=empresa).select_related("debtor", "last_batch")
+              .prefetch_related("charges").order_by("status", "external_id"))
+    por_estado = Counter()
+    informado = {Debt.Currency.CLP: 0, Debt.Currency.UF: 0}
+    filas = []
+    for deuda in deudas:
+        cargos = list(deuda.charges.all())
+        saldo = sum((c.amount for c in cargos), 0)
+        en_gestion = deuda.status in EN_GESTION
+        if en_gestion:
+            informado[deuda.currency] += saldo
+        por_estado[deuda.status] += 1
+        mas_antiguo = min((c.due_date for c in cargos), default=deuda.last_batch.cut_off)
+        filas.append({
+            "deuda": deuda, "saldo": saldo, "en_gestion": en_gestion,
+            "estado": estado_de(deuda),
+            "mora": (deuda.last_batch.cut_off - mas_antiguo).days,
+        })
+    estados = [(etiqueta, por_estado[valor]) for valor, etiqueta in ESTADOS_EN_PANEL]
+    if por_estado[Debt.Status.DISPUTED]:
+        estados.append(("Disputadas", por_estado[Debt.Status.DISPUTED]))
+    return {
+        "entregas": entregas,
+        "deudas": filas,
+        "estados": estados,
+        "informado_clp": informado[Debt.Currency.CLP],
+        "informado_uf": informado[Debt.Currency.UF],
+    }
 
 
 @login_required
@@ -167,6 +253,7 @@ def cliente_detalle(request, pk):
         "empresa": empresa,
         "campanas": campanas,
         "leads": empresa.origin_leads.all()[:5],
+        "recibida": cartera_recibida(empresa),
         "form_contacto": CreditorContactForm(),
         "estados": Creditor.Status.choices,
     }

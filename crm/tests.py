@@ -27,6 +27,7 @@ from .models import (
     Industry, Lead,
 )
 from .panel_views import adjuntar_cartera
+from .templatetags.cifras import pesos, uf
 
 
 def crear_empresa(**extra):
@@ -1255,3 +1256,20 @@ class LosRutDeDemostracionSonValidos(TestCase):
                     f"{cuerpo}-{digito} no es un RUT valido: "
                     f"el digito verificador es {self.digito_verificador(cuerpo)}.",
                 )
+
+
+
+class CifrasTest(TestCase):
+    """Los montos del panel, como se escriben en Chile."""
+
+    def test_pesos_con_punto_de_miles(self):
+        self.assertEqual(pesos(1360000), "$1.360.000")
+        self.assertEqual(pesos(Decimal("41300.00")), "$41.300")
+
+    def test_uf_con_coma_decimal(self):
+        self.assertEqual(uf(Decimal("115.5")), "UF 115,50")
+        self.assertEqual(uf(Decimal("1250.25")), "UF 1.250,25")
+
+    def test_lo_que_no_es_numero_queda_en_blanco(self):
+        self.assertEqual(pesos(None), "")
+        self.assertEqual(uf("abc"), "")

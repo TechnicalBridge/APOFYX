@@ -586,6 +586,11 @@ a { text-decoration: none; }
     color: var(--ap-oro-claro); border-color: rgba(221, 193, 137, .35);
 }
 .ap-estado--paused, .ap-estado--churned, .ap-estado--discarded { opacity: .6; }
+.ap-estado--open { color: var(--ap-oro-claro); border-color: rgba(221, 193, 137, .35); }
+.ap-estado--repacted { color: #8fbce0; border-color: rgba(143, 188, 224, .35); }
+.ap-estado--paid { color: #7fd6a9; border-color: rgba(127, 214, 169, .35); }
+.ap-estado--withdrawn { opacity: .6; }
+.ap-estado--disputed { color: #e08a7a; border-color: rgba(224, 138, 122, .35); }
 
 .ap-marca-principal {
     font-family: var(--ap-mono); font-size: .62rem; letter-spacing: .08em;

@@ -1,0 +1,80 @@
+{# La cartera que el cliente entrego por la integracion: lo que APOFYX sabe de primera mano, deuda por deuda. #}
+{% load cifras %}
+<div class="ap-kpis mb-3">
+    {% for etiqueta, cuantas in recibida.estados %}
+    <div class="ap-kpi">
+        <span class="ap-kpi__valor">{{ cuantas }}</span>
+        <span class="ap-kpi__texto">{{ etiqueta }}</span>
+    </div>
+    {% endfor %}
+</div>
+<p class="ap-micro mb-4">
+    Deuda informada en la última entrega: {{ recibida.informado_clp|pesos }}{% if recibida.informado_uf %} y {{ recibida.informado_uf|uf }}{% endif %}.
+    Los pesos y las UF no se suman entre sí, y lo pagado después se ve en la entrega siguiente: el saldo al día
+    lo lleva DataBridge.
+</p>
+
+<h3 class="ap-rotulo mb-2">Entregas</h3>
+<div class="ap-tabla-envoltorio mb-4">
+    <table class="ap-tabla">
+        <thead>
+            <tr>
+                <th>Lote</th><th>Corte</th>
+                <th class="ap-num">Recibidas</th><th class="ap-num">Aceptadas</th><th class="ap-num">Rechazadas</th>
+                <th>A DataBridge</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entrega in recibida.entregas %}
+            <tr>
+                <td class="ap-mono">{{ entrega.external_id }}</td>
+                <td>{{ entrega.cut_off|date:"d/m/Y" }}</td>
+                <td class="ap-num">{{ entrega.received_count }}</td>
+                <td class="ap-num">{{ entrega.accepted_count }}</td>
+                <td class="ap-num">{{ entrega.rejected_count }}</td>
+                <td>
+                    {% if entrega.forward %}
+                    {{ entrega.forward.get_status_display }}
+                    {% if entrega.forward.response.recibidas %}
+                    <span class="ap-micro d-block">{{ entrega.forward.response.aceptadas }} de {{ entrega.forward.response.recibidas }} aceptadas</span>
+                    {% endif %}
+                    {% else %}
+                    <span class="ap-micro">No se reenvía</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<h3 class="ap-rotulo mb-2">Deudas</h3>
+<div class="ap-tabla-envoltorio mb-2">
+    <table class="ap-tabla">
+        <thead>
+            <tr><th>Contrato</th><th>Deudor</th><th>Estado</th><th class="ap-num">Deuda informada</th><th class="ap-num">Mora</th></tr>
+        </thead>
+        <tbody>
+            {% for fila in recibida.deudas %}
+            <tr>
+                <td class="ap-mono">{{ fila.deuda.external_id }}</td>
+                <td>
+                    {{ fila.deuda.debtor.full_name }}
+                    <span class="ap-micro d-block">{{ fila.deuda.debtor.tax_id }}</span>
+                </td>
+                <td><span class="ap-estado ap-estado--{{ fila.deuda.status }}">{{ fila.estado }}</span></td>
+                <td class="ap-num">
+                    {% if fila.en_gestion %}
+                    {% if fila.deuda.currency == "UF" %}{{ fila.saldo|uf }}{% else %}{{ fila.saldo|pesos }}{% endif %}
+                    {% else %}—{% endif %}
+                </td>
+                <td class="ap-num">{% if fila.en_gestion %}{{ fila.mora }} días{% else %}—{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<p class="ap-micro mb-4">
+    La mora se cuenta hasta el corte de la última entrega de cada deuda. Pasados los 120 días,
+    APOFYX la devuelve al acreedor.
+</p>

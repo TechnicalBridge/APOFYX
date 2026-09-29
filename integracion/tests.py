@@ -1070,3 +1070,144 @@ class LaDemoNoPisaUnaCarteraReal(TestCase):
         self.acreedor.delete()
         with self.assertRaises(CommandError):
             cargar_demo()
+
+
+# ==========================================================================
+#  El mes siguiente: el acreedor vuelve a mandar una deuda que APOFYX ya tiene
+# ==========================================================================
+
+def lote_de_felipe(corte, meses):
+    """Una entrega de Patrimonio con solo la deuda de Felipe, a otra fecha de corte."""
+    lote = cartera_de_ejemplo()
+    lote["lote"]["id_externo"] = f"PAT-{corte}-01"
+    lote["lote"]["fecha_corte"] = corte
+    felipe = lote["deudas"][0]
+    felipe["cargos"] = [{"concepto": f"Arriendo {nombre}", "periodo": periodo, "monto": 520000,
+                         "fecha_vencimiento": f"{periodo}-05"} for nombre, periodo in meses]
+    lote["deudas"] = [felipe]
+    return lote
+
+
+@override_settings(DATABRIDGE=CON_EVENTOS)
+class UnaDeudaPagadaVuelveSiElDeudorSeAtrasa(TestCase):
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        recibir_evento(evento_de_databridge("deuda.saldada"))
+
+    def felipe(self):
+        return Debt.objects.get(external_id="CTR-2025-014")
+
+    def test_con_un_mes_nuevo_vuelve_a_gestion(self):
+        respuesta = recibir_cartera(self.acreedor, lote_de_felipe("2026-10-18", [("octubre", "2026-10")]))
+
+        self.assertEqual(respuesta["resultados"][0]["resultado"], "actualizada")
+        self.assertEqual(self.felipe().status, Debt.Status.OPEN)
+        self.assertEqual(self.felipe().saldo, Decimal("520000"))
+
+    def test_con_un_mes_que_ya_se_pago_se_rechaza(self):
+        """Cobrar septiembre de nuevo seria cobrarlo dos veces."""
+        respuesta = recibir_cartera(self.acreedor, lote_de_felipe(
+            "2026-10-18", [("septiembre", "2026-09"), ("octubre", "2026-10")]))
+
+        resultado = respuesta["resultados"][0]
+        self.assertEqual(resultado["resultado"], "rechazada")
+        self.assertEqual(resultado["errores"][0]["codigo"], "deuda_saldada")
+        self.assertEqual(self.felipe().status, Debt.Status.PAID)
+
+    def test_retirarla_no_cambia_nada(self):
+        lote = lote_de_felipe("2026-10-18", [])
+        lote["deudas"] = [{"id_externo": "CTR-2025-014", "accion": "retirar", "motivo_retiro": "pago_directo"}]
+
+        respuesta = recibir_cartera(self.acreedor, lote)
+
+        self.assertEqual(respuesta["resultados"][0]["errores"][0]["codigo"], "deuda_saldada")
+        self.assertEqual(self.felipe().status, Debt.Status.PAID)
+
+
+@override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+class UnCasoFueraDeMandatoVuelveAlAcreedor(TestCase):
+    """
+    Pasados los 120 dias de mora APOFYX devuelve el caso (docs 2.2). Si ya lo
+    estaba cobrando, rechazar la actualizacion no basta: DataBridge seguiria
+    cobrando el monto viejo.
+    """
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        self.campana = campana_de(self.acreedor)
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        #  En enero Felipe sigue debiendo desde agosto: 166 dias.
+        self.respuesta = recibir_cartera(self.acreedor, lote_de_felipe(
+            "2027-01-18", [("agosto", "2026-08"), ("septiembre", "2026-09")]))
+
+    def test_la_respuesta_dice_que_vuelve_al_acreedor(self):
+        resultado = self.respuesta["resultados"][0]
+        self.assertEqual(resultado["resultado"], "rechazada")
+        self.assertEqual(resultado["errores"][0]["codigo"], "mora_fuera_de_mandato")
+        self.assertIn("deja de cobrarla", resultado["errores"][0]["mensaje"])
+
+    def test_apofyx_la_saca_de_su_cartera(self):
+        felipe = Debt.objects.get(external_id="CTR-2025-014")
+        self.assertEqual(felipe.status, Debt.Status.WITHDRAWN)
+        self.assertEqual(felipe.withdrawn_reason, "fuera_de_mandato")
+
+    def test_y_el_retiro_sigue_a_databridge(self):
+        forward = Forward.objects.get(batch__external_id="PAT-2027-01-18-01")
+        cartera = construir_cartera(forward, self.campana)
+        self.assertEqual(cartera["deudas"], [
+            {"id_externo": "CTR-2025-014", "accion": "retirar", "motivo_retiro": "fuera_de_mandato"},
+        ])
+
+    def test_una_deuda_nueva_fuera_de_mandato_solo_se_rechaza(self):
+        lote = lote_de_felipe("2027-02-18", [("agosto", "2026-08")])
+        lote["deudas"][0]["id_externo"] = "CTR-2026-099"
+
+        respuesta = recibir_cartera(self.acreedor, lote)
+
+        self.assertEqual(respuesta["resultados"][0]["errores"][0]["codigo"], "mora_fuera_de_mandato")
+        self.assertNotIn("deja de cobrarla", respuesta["resultados"][0]["errores"][0]["mensaje"])
+        self.assertFalse(Forward.objects.filter(batch__external_id="PAT-2027-02-18-01").exists())
+
+
+# ==========================================================================
+#  El panel muestra la cartera que llego por la integracion
+# ==========================================================================
+
+from django.contrib.auth.models import User  # noqa: E402
+
+
+@override_settings(DATABRIDGE=CON_EVENTOS)
+class ElPanelMuestraLaCarteraRecibida(TestCase):
+    """
+    El panel leia solo los cortes mensuales (crm_portfoliohandover), y un
+    cliente que entrega por la API aparecia sin cartera.
+    """
+
+    def setUp(self):
+        User.objects.create_user("operador", password="clave-larga-123")
+        self.client.login(username="operador", password="clave-larga-123")
+        self.acreedor = crear_acreedor()
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        recibir_evento(evento_de_databridge("repactacion.aceptada", cuotas=6))
+
+    def test_la_ficha_muestra_la_entrega_y_cada_deuda(self):
+        r = self.client.get(reverse("panel:cliente_detalle", args=[self.acreedor.pk]))
+
+        self.assertContains(r, "PAT-2026-09-18-01")
+        self.assertContains(r, "CTR-2025-014")
+        self.assertNotContains(r, "todavía no ha entregado cartera")
+        estados = dict(r.context["recibida"]["estados"])
+        self.assertEqual(estados["En convenio"], 1)      # Felipe
+        self.assertEqual(estados["En gestión"], 2)       # Valentina y Nandu
+        self.assertEqual(r.context["recibida"]["informado_clp"], Decimal("1450000"))
+        self.assertEqual(r.context["recibida"]["informado_uf"], Decimal("115.50"))
+
+    def test_el_listado_y_el_resumen_la_cuentan(self):
+        empresa = next(e for e in self.client.get(reverse("panel:clientes")).context["empresas"]
+                       if e.pk == self.acreedor.pk)
+        self.assertEqual(empresa.cartera["registros"], 3)
+        #  El ticket, solo sobre las deudas en pesos: Felipe y Valentina.
+        self.assertEqual(empresa.cartera["ticket"], Decimal("725000"))
+        self.assertEqual(self.client.get(reverse("panel:dashboard")).context["cartera_total"], 3)
