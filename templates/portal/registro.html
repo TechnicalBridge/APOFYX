@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block titulo %}Registrar mi empresa — APOFYX{% endblock %}
+{% block navegacion %}
+<li class="nav-item"><a class="nav-link" href="{% url 'site:home' %}">Volver al sitio</a></li>
+<li class="nav-item"><a class="nav-link" href="{% url 'portal:entrar' %}">Ya tengo cuenta</a></li>
+{% endblock %}
+
+{% block contenido %}
+<section class="ap-seccion">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-lg-8 revelar">
+        <div class="ap-panel p-4 p-lg-5">
+          <span class="ap-etiqueta mb-3">Portal de empresas</span>
+          <h1 class="h3 mb-2">Registrar mi empresa</h1>
+          <p class="ap-nota mb-4">
+            Revisamos cada registro antes de dar acceso. Si su empresa ya es cliente de APOFYX, use el mismo
+            RUT: su cuenta queda dentro de la empresa.
+          </p>
+
+          <form method="post" novalidate>
+            {% csrf_token %}
+            <h2 class="ap-h3 mb-3">La empresa</h2>
+            <div class="row g-3 mb-4">
+              {% for campo in form %}
+              {% if campo.name == 'full_name' %}
+            </div>
+            <h2 class="ap-h3 mb-3">Quien la va a usar</h2>
+            <div class="row g-3 mb-4">
+              {% endif %}
+              <div class="col-md-6">
+                <label class="form-label" for="{{ campo.id_for_label }}">
+                  {{ campo.label }}{% if campo.field.required %} <span style="color: var(--ap-oro)">*</span>{% endif %}
+                </label>
+                {{ campo }}
+                {% if campo.help_text %}<div class="form-text">{{ campo.help_text }}</div>{% endif %}
+                {% for error in campo.errors %}<div class="ap-error mt-1">{{ error }}</div>{% endfor %}
+              </div>
+              {% endfor %}
+            </div>
+            <button class="btn btn-ap btn-lg" type="submit">Registrar</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

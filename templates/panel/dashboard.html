@@ -9,6 +9,48 @@
 
 {% block panel %}
 
+{% if accesos_pendientes %}
+<div class="ap-aviso ap-aviso--warning mb-4">
+    <strong>{{ accesos_pendientes|length }} cuenta{{ accesos_pendientes|length|pluralize }} de empresa
+        espera{{ accesos_pendientes|length|pluralize:"n" }} que apruebes su acceso.</strong>
+    <div class="ap-lista-compacta mt-2">
+        {% for contacto in accesos_pendientes %}
+        <div class="d-flex flex-wrap justify-content-between gap-2 align-items-center">
+            <span>
+                {{ contacto.full_name }} · {{ contacto.email }}
+                <span class="ap-micro d-block">
+                    <a href="{% url 'panel:cliente_detalle' contacto.creditor.pk %}">{{ contacto.creditor.trade_name }}</a>
+                    · {{ contacto.creditor.rut_formateado }} · {{ contacto.creditor.get_status_display }}
+                </span>
+            </span>
+            <form method="post" action="{% url 'panel:acceso_aprobar' contacto.creditor.pk contacto.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="volver" value="{% url 'panel:dashboard' %}">
+                <button class="btn btn-ap" type="submit">Aprobar</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{% if esperando_campana %}
+<p class="ap-aviso ap-aviso--warning mb-4">
+    {{ esperando_campana|length }} entrega{{ esperando_campana|length|pluralize }} espera{{ esperando_campana|length|pluralize:"n" }} campaña para pasar a
+    la plataforma de pagos:
+    {% for forward in esperando_campana %}
+    <a href="{% url 'panel:cliente_detalle' forward.batch.creditor.pk %}">{{ forward.batch.creditor.trade_name }}</a>{% if not forloop.last %}, {% endif %}
+    {% endfor %}.
+</p>
+{% endif %}
+
+{% if not plataforma %}
+<p class="ap-aviso ap-aviso--info mb-4">
+    APOFYX no está conectada a la plataforma de pagos: las carteras se reciben, pero no se reenvían.
+    <a href="{% url 'panel:plataforma' %}">Conectar</a>.
+</p>
+{% endif %}
+
 <div class="ap-kpis">
     <div class="ap-kpi">
         <span class="ap-kpi__valor">{{ clientes_activos }}</span>
@@ -16,7 +58,7 @@
     </div>
     <div class="ap-kpi">
         <span class="ap-kpi__valor">{{ cartera_total }}</span>
-        <span class="ap-kpi__texto">Deudores en gestión<br><em>último periodo</em></span>
+        <span class="ap-kpi__texto">Deudas en gestión<br><em>de la cartera entregada</em></span>
     </div>
     <div class="ap-kpi">
         <span class="ap-kpi__valor">{{ campanas_en_curso }}</span>
@@ -56,17 +98,6 @@
     </div>
 
     <div class="col-lg-5">
-        <h2 class="ap-h3 mb-3">Clientes por rubro</h2>
-        <table class="ap-tabla mb-4">
-            <tbody>
-                {% for rubro in rubros %}
-                <tr><th>{{ rubro.name }}</th><td class="ap-num">{{ rubro.total }}</td></tr>
-                {% empty %}
-                <tr><td class="ap-micro">Sin clientes cargados.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-
         <h2 class="ap-h3 mb-3">Asistente del sitio</h2>
         <table class="ap-tabla mb-2">
             <tbody>

@@ -42,8 +42,8 @@
                 <ul class="navbar-nav ap-nav ms-auto align-items-lg-center gap-lg-1 mt-3 mt-lg-0">
                     {% block navegacion %}
                     <li class="nav-item"><a class="nav-link" href="{% url 'site:home' %}#proceso">Proceso</a></li>
-                    <li class="nav-item"><a class="nav-link" href="{% url 'site:home' %}#rubros">Rubros</a></li>
-                    <li class="nav-item"><a class="nav-link" href="{% url 'panel:login' %}">Acceso clientes</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{% url 'site:home' %}#empresas">Empresas</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{% url 'portal:entrar' %}">Acceso empresas</a></li>
                     <li class="nav-item ms-lg-2 mt-2 mt-lg-0">
                         <a class="btn btn-ap w-100" href="{% url 'site:home' %}#contacto">Hablemos</a>
                     </li>
@@ -77,7 +77,7 @@
                 <p class="ap-pie__titulo">Servicio</p>
                 <ul class="list-unstyled d-grid gap-2 mb-0">
                     <li><a href="{% url 'site:home' %}#proceso">Proceso</a></li>
-                    <li><a href="{% url 'site:home' %}#rubros">Rubros atendidos</a></li>
+                    <li><a href="{% url 'site:home' %}#empresas">A quiénes servimos</a></li>
                     <li><a href="{% url 'site:home' %}#contacto">Contacto</a></li>
                 </ul>
             </div>
@@ -87,7 +87,8 @@
                 <ul class="list-unstyled d-grid gap-2 mb-0">
                     <li><a href="mailto:comercial@apofyx.cl">comercial@apofyx.cl</a></li>
                     <li><a href="mailto:contacto@apofyx.cl">contacto@apofyx.cl</a></li>
-                    <li><a href="{% url 'panel:login' %}">Acceso clientes</a></li>
+                    <li><a href="{% url 'portal:entrar' %}">Acceso empresas</a></li>
+                    <li><a href="{% url 'panel:login' %}">Acceso equipo APOFYX</a></li>
                 </ul>
             </div>
         </div>

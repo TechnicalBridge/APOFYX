@@ -18,6 +18,11 @@ DOS PRINCIPIOS QUE EXPLICAN CASI TODO EL ARCHIVO
 Y dos reglas del mes siguiente, cuando el acreedor vuelve a mandar una deuda
 que APOFYX ya tiene: una pagada vuelve a cobranza solo con cargos posteriores a
 los que se pagaron, y una que paso la mora del mandato se devuelve.
+
+EL ACREEDOR MANDA A TODOS SUS CLIENTES CON CONTRATO. El que esta al dia viene
+con `cargos: []`: si APOFYX no lo tenia, se responde `al_dia` y no se guarda
+ningun dato suyo; si tenia su deuda en gestion, le pago al acreedor por fuera,
+y se cierra como un retiro `pago_directo` que tambien le llega a DataBridge.
 """
 
 import hashlib
@@ -25,14 +30,11 @@ import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from django.conf import settings
 from django.db import transaction
 
 from cartera.models import Batch, Debt, DebtCharge, Debtor
 from crm.rut import es_valido, normalizar
-
-#  Pasada esta mora APOFYX devuelve el caso al acreedor (docs §2.2). El limite
-#  es de APOFYX, no del contrato: otra agencia podria usar otro.
-MORA_MAXIMA_DIAS = 120
 
 MOTIVOS_DE_RETIRO = {"pago_directo", "acuerdo_directo", "error", "disputa_resuelta", "fuera_de_mandato", "otro"}
 
@@ -115,6 +117,11 @@ def _validar_deuda(deuda, corte, vistos):
                                   "Un retiro necesita un motivo valido"))
         return errores, {"accion": "retirar", "motivo": deuda.get("motivo_retiro")}
 
+    crudos = deuda.get("cargos")
+    if isinstance(crudos, list) and not crudos:
+        #  Al dia: no hay nada que validar ni que guardar de el.
+        return [], {"accion": "al_dia"}
+
     deudor = deuda.get("deudor") or {}
     rut = normalizar(deudor.get("rut"))
     if not es_valido(rut):
@@ -135,8 +142,7 @@ def _validar_deuda(deuda, corte, vistos):
         errores.append(_error("concepto", "concepto_faltante", "La deuda no trae concepto"))
 
     cargos, vencimientos = [], []
-    crudos = deuda.get("cargos")
-    if not isinstance(crudos, list) or not crudos:
+    if not isinstance(crudos, list):
         errores.append(_error("cargos", "sin_cargos", "La deuda no trae cargos"))
     else:
         for i, cargo in enumerate(crudos):
@@ -165,10 +171,13 @@ def _validar_deuda(deuda, corte, vistos):
                 "monto": monto, "vence": vence,
             })
 
+    #  Pasada esta mora APOFYX devuelve el caso al acreedor (docs §2.2). El
+    #  limite es de APOFYX, no del contrato: otra agencia podria usar otro.
+    maxima = settings.DATABRIDGE["MORA_MAXIMA_DIAS"]
     mora = (corte - min(vencimientos)).days if vencimientos else 0
-    if mora > MORA_MAXIMA_DIAS:
+    if mora > maxima:
         errores.append(_error("cargos", "mora_fuera_de_mandato",
-                              f"{mora} dias de mora: pasados los {MORA_MAXIMA_DIAS} "
+                              f"{mora} dias de mora: pasados los {maxima} "
                               "el caso vuelve al acreedor"))
 
     if errores:
@@ -269,6 +278,15 @@ def recibir_cartera(creditor, payload, source=Batch.Source.API, reenviar=True):
             continue
 
         existente = Debt.objects.filter(creditor=creditor, external_id=id_deuda).first()
+        if datos["accion"] == "al_dia":
+            aceptadas += 1
+            if existente and existente.status in SE_CONSERVAN:
+                _cerrar(existente, "pago_directo", batch)
+                resultados.append({"id_externo": id_deuda, "resultado": "retirada"})
+            else:
+                resultados.append({"id_externo": id_deuda, "resultado": "al_dia"})
+            continue
+
         if existente and existente.status == Debt.Status.PAID:
             #  Vuelve a cobranza solo si el deudor se volvio a atrasar: con alguno
             #  de los cargos que ya se pagaron seria cobrarle dos veces.
@@ -293,10 +311,7 @@ def recibir_cartera(creditor, payload, source=Batch.Source.API, reenviar=True):
                                        "No hay ninguna deuda con ese id para retirar")],
                 })
                 continue
-            existente.status = Debt.Status.WITHDRAWN
-            existente.withdrawn_reason = datos["motivo"]
-            existente.last_batch = batch
-            existente.save(update_fields=["status", "withdrawn_reason", "last_batch", "updated_at"])
+            _cerrar(existente, datos["motivo"], batch)
             aceptadas += 1
             resultados.append({"id_externo": id_deuda, "resultado": "retirada"})
             continue
@@ -351,11 +366,16 @@ def _devolver(creditor, batch, id_deuda):
     deuda = Debt.objects.filter(creditor=creditor, external_id=id_deuda, status__in=SE_CONSERVAN).first()
     if deuda is None:
         return False
+    _cerrar(deuda, "fuera_de_mandato", batch)
+    return True
+
+
+def _cerrar(deuda, motivo, batch):
+    """Saca la deuda de la gestion. Queda en esta entrega, asi el reenvio le pasa el retiro a DataBridge."""
     deuda.status = Debt.Status.WITHDRAWN
-    deuda.withdrawn_reason = "fuera_de_mandato"
+    deuda.withdrawn_reason = motivo
     deuda.last_batch = batch
     deuda.save(update_fields=["status", "withdrawn_reason", "last_batch", "updated_at"])
-    return True
 
 
 def _guardar_deuda(creditor, batch, id_deuda, datos, existente):

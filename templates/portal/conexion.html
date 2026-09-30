@@ -1,0 +1,129 @@
+{% extends "portal/base_portal.html" %}
+
+{% block titulo_portal %}Conectar mi sistema{% endblock %}
+{% block encabezado %}Conectar mi sistema{% endblock %}
+
+{% block portal %}
+
+<div class="row g-5">
+    <div class="col-lg-7">
+        <h2 class="ap-h3 mb-3">Claves de API</h2>
+
+        {% if clave_nueva %}
+        <div class="ap-aviso ap-aviso--success mb-4">
+            <strong>Su clave nueva.</strong> Cópiela ahora: no se vuelve a mostrar.
+            <code class="ap-secreto">{{ clave_nueva }}</code>
+            Su sistema la presenta como <span class="ap-mono">Authorization: Bearer &lt;clave&gt;</span>.
+        </div>
+        {% endif %}
+
+        <table class="ap-tabla mb-3">
+            <thead><tr><th>Clave</th><th>Nombre</th><th>Emitida</th><th>Último uso</th><th></th></tr></thead>
+            <tbody>
+                {% for clave in claves %}
+                <tr>
+                    <td class="ap-mono">{{ clave.prefix }}…</td>
+                    <td>{{ clave.name }}</td>
+                    <td>{{ clave.created_at|date:"d/m/Y" }}</td>
+                    <td>{{ clave.last_used_at|date:"d/m/Y H:i"|default:"—" }}</td>
+                    <td class="text-end">
+                        {% if clave.revoked_at %}
+                        <span class="ap-micro">Revocada</span>
+                        {% else %}
+                        <form method="post">
+                            {% csrf_token %}
+                            <input type="hidden" name="accion" value="revocar">
+                            <input type="hidden" name="clave" value="{{ clave.pk }}">
+                            <button class="btn btn-ap-linea btn-sm" type="submit">Revocar</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" class="ap-micro">Todavía no tiene claves.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <form method="post" class="d-flex flex-wrap gap-2 mb-5">
+            {% csrf_token %}
+            <input type="hidden" name="accion" value="emitir">
+            <label class="visually-hidden" for="nombre">Para qué es</label>
+            <input class="form-control" id="nombre" name="nombre" placeholder="Para qué es: Sistema de arriendos"
+                   maxlength="80" style="max-width: 22rem">
+            <button class="btn btn-ap" type="submit">Emitir clave</button>
+        </form>
+
+        <h2 class="ap-h3 mb-3">Avisos de pago</h2>
+        <p class="ap-nota">
+            Dónde le avisamos cuando un deudor paga o acepta un convenio. Cada aviso va firmado con un
+            secreto; su sistema lo usa para comprobar que viene de APOFYX.
+        </p>
+
+        {% if secreto_nuevo %}
+        <div class="ap-aviso ap-aviso--success mb-4">
+            <strong>El secreto de sus avisos.</strong> Cópielo ahora: no se vuelve a mostrar.
+            <code class="ap-secreto">{{ secreto_nuevo }}</code>
+            Cada aviso trae <span class="ap-mono">X-Firma: v1=HMAC-SHA256(secreto, X-Timestamp + "." + cuerpo)</span>.
+        </div>
+        {% endif %}
+
+        <div class="ap-lista-compacta mb-3">
+            {% for suscripcion in suscripciones %}
+            <div class="d-flex justify-content-between gap-3 align-items-center">
+                <span class="ap-mono">{{ suscripcion.url }}</span>
+                <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="accion" value="quitar_avisos">
+                    <input type="hidden" name="suscripcion" value="{{ suscripcion.pk }}">
+                    <button class="btn btn-ap-linea btn-sm" type="submit">Dejar de avisar</button>
+                </form>
+            </div>
+            {% empty %}
+            <p class="ap-micro mb-0">Todavía no nos dijo dónde avisarle.</p>
+            {% endfor %}
+        </div>
+        <form method="post" class="d-flex flex-wrap gap-2 mb-5">
+            {% csrf_token %}
+            <input type="hidden" name="accion" value="avisos">
+            <label class="visually-hidden" for="url">Dirección</label>
+            <input class="form-control" id="url" name="url" type="url" placeholder="https://su-sistema.cl/api/eventos"
+                   style="max-width: 26rem">
+            <button class="btn btn-ap-linea" type="submit">Registrar dirección</button>
+        </form>
+
+        {% if avisos %}
+        <h2 class="ap-h3 mb-3">Últimos avisos</h2>
+        <table class="ap-tabla">
+            <thead><tr><th>Aviso</th><th>Cuándo</th><th>Estado</th></tr></thead>
+            <tbody>
+                {% for aviso in avisos %}
+                <tr>
+                    <td class="ap-mono">{{ aviso.type }}</td>
+                    <td>{{ aviso.created_at|date:"d/m/Y H:i" }}</td>
+                    <td>{{ aviso.get_status_display }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+
+    <div class="col-lg-5">
+        <h2 class="ap-h3 mb-3">Para su sistema</h2>
+        <p class="ap-nota">Con la clave, su sistema usa el contrato de integración, versión 1:</p>
+        <table class="ap-tabla ap-tabla--ficha mb-3">
+            <tbody>
+                <tr><th>Comprobar la clave</th><td class="ap-mono">GET {{ base }}/cuenta</td></tr>
+                <tr><th>Recibir los avisos</th><td class="ap-mono">POST {{ base }}/suscripciones</td></tr>
+                <tr><th>Entregar la cartera</th><td class="ap-mono">POST {{ base }}/carteras</td></tr>
+            </tbody>
+        </table>
+        <p class="ap-micro">
+            Si su sistema se suscribe solo con <span class="ap-mono">/suscripciones</span>, no hace falta
+            registrar la dirección aquí: es lo mismo. Cada mes entréguenos a todos sus clientes con contrato,
+            deban o no; los que están al día van con <span class="ap-mono">cargos: []</span>.
+        </p>
+    </div>
+</div>
+
+{% endblock %}

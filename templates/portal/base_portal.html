@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% comment %}
+Armazon del portal de empresas. Es el del panel con otra navegacion: lo que ve
+una empresa cliente de lo suyo, no lo que opera el personal.
+{% endcomment %}
+
+{% block titulo %}{% block titulo_portal %}Portal{% endblock %} — {{ empresa.trade_name }} en APOFYX{% endblock %}
+
+{% block navegacion %}
+<li class="nav-item"><a class="nav-link {% if activo == 'cartera' %}ap-nav--activo{% endif %}" href="{% url 'portal:inicio' %}">Mi cartera</a></li>
+<li class="nav-item"><a class="nav-link {% if activo == 'subir' %}ap-nav--activo{% endif %}" href="{% url 'portal:subir' %}">Subir cartera</a></li>
+<li class="nav-item"><a class="nav-link {% if activo == 'conexion' %}ap-nav--activo{% endif %}" href="{% url 'portal:conexion' %}">Conectar mi sistema</a></li>
+<li class="nav-item"><a class="nav-link {% if activo == 'datos' %}ap-nav--activo{% endif %}" href="{% url 'portal:datos' %}">Mis datos</a></li>
+<li class="nav-item ms-lg-3 mt-2 mt-lg-0">
+    <form method="post" action="{% url 'portal:salir' %}" class="d-inline">
+        {% csrf_token %}
+        <button class="btn btn-ap-linea w-100" type="submit">Salir</button>
+    </form>
+</li>
+{% endblock %}
+
+{% block asistente %}{% endblock %}
+{% block script_asistente %}{% endblock %}
+
+{% block contenido %}
+<section class="ap-panel-pagina">
+    <div class="container">
+        <header class="ap-panel-cabecera">
+            <div>
+                <p class="ap-rotulo">{{ empresa.trade_name }} · {{ empresa.rut_formateado }}</p>
+                <h1 class="ap-h2 mb-0">{% block encabezado %}{% endblock %}</h1>
+            </div>
+            <div class="ap-panel-cabecera__extra">{% block cabecera_extra %}{% endblock %}</div>
+        </header>
+
+        {% if messages %}
+        <div class="mb-4 d-grid gap-2">
+            {% for mensaje in messages %}
+            <p class="ap-aviso ap-aviso--{{ mensaje.tags }} mb-0">{{ mensaje }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% block portal %}{% endblock %}
+    </div>
+</section>
+{% endblock %}

@@ -29,7 +29,7 @@
                 <div class="ap-datos">
                     <div class="ap-dato">
                         <span class="ap-dato__valor" data-contador="{{ cifras.cartera }}">{{ cifras.cartera }}</span>
-                        <span class="ap-dato__texto">Deudores en gestion este periodo</span>
+                        <span class="ap-dato__texto">Deudores en gestión hoy</span>
                     </div>
                     <div class="ap-dato">
                         <span class="ap-dato__valor">{{ cifras.tasa_entrega }}%</span>
@@ -194,27 +194,31 @@
 </section>
 
 
-{# ====================== Rubros ====================== #}
-<section class="ap-seccion" id="rubros">
+{# ====================== A quienes servimos ====================== #}
+<section class="ap-seccion" id="empresas">
     <div class="container">
         <div class="mb-5 revelar" style="max-width: 46ch">
-            <p class="ap-rotulo">A quienes servimos</p>
-            <h2 class="ap-h2 mb-0">Empresas con muchos morosos de monto bajo</h2>
+            <p class="ap-rotulo">A quiénes servimos</p>
+            <h2 class="ap-h2 mb-0">Cualquier empresa con cobros atrasados</h2>
         </div>
 
         <div class="row ap-celdas revelar revelar-grupo">
-            {% for rubro in rubros %}
             <div class="col-md-6 ap-celda">
-                <h3 class="ap-h3 mb-2">{{ rubro.name }}</h3>
-                <p class="ap-nota mb-0">{{ rubro.description }}</p>
+                <h3 class="ap-h3 mb-2">El rubro no cambia cómo cobramos</h3>
+                <p class="ap-nota mb-0">
+                    Arriendos, colegios, gimnasios, clínicas o servicios: lo que importa es que su
+                    empresa cobre todos los meses y tenga clientes que se atrasan.
+                </p>
             </div>
-            {% endfor %}
+            <div class="col-md-6 ap-celda">
+                <h3 class="ap-h3 mb-2">Se suma sola</h3>
+                <p class="ap-nota mb-0">
+                    Registra su empresa, la validamos y desde su portal nos entrega su cartera:
+                    con una planilla o conectando su sistema.
+                    <a href="{% url 'portal:registro' %}">Registrar mi empresa</a>.
+                </p>
+            </div>
         </div>
-
-        <p class="ap-micro mt-4 mb-0">
-            El requisito practico es tener al menos unos 200 registros en mora. Bajo ese
-            volumen, la automatizacion no se justifica frente a una gestion manual.
-        </p>
     </div>
 </section>
 

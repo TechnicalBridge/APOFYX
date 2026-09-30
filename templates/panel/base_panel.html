@@ -12,6 +12,7 @@ pero reemplaza la navegacion: aca no se vende nada, se opera.
 <li class="nav-item"><a class="nav-link {% if activo == 'resumen' %}ap-nav--activo{% endif %}" href="{% url 'panel:dashboard' %}">Resumen</a></li>
 <li class="nav-item"><a class="nav-link {% if activo == 'clientes' %}ap-nav--activo{% endif %}" href="{% url 'panel:clientes' %}">Clientes</a></li>
 <li class="nav-item"><a class="nav-link {% if activo == 'leads' %}ap-nav--activo{% endif %}" href="{% url 'panel:leads' %}">Leads</a></li>
+<li class="nav-item"><a class="nav-link {% if activo == 'plataforma' %}ap-nav--activo{% endif %}" href="{% url 'panel:plataforma' %}">Plataforma</a></li>
 <li class="nav-item"><a class="nav-link" href="/admin/">Datos</a></li>
 <li class="nav-item ms-lg-3 mt-2 mt-lg-0">
     <form method="post" action="{% url 'panel:logout' %}" class="d-inline">

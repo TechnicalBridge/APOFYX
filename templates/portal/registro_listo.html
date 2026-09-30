@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block titulo %}Registro recibido — APOFYX{% endblock %}
+{% block navegacion %}
+<li class="nav-item"><a class="nav-link" href="{% url 'site:home' %}">Volver al sitio</a></li>
+{% endblock %}
+
+{% block contenido %}
+<section class="ap-seccion">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-md-8 col-lg-6 revelar">
+        <div class="ap-panel p-4 p-lg-5">
+          <span class="ap-etiqueta mb-3">Portal de empresas</span>
+          <h1 class="h3 mb-3">Recibimos su registro</h1>
+          <p class="ap-nota">
+            {% if nueva %}
+            {{ empresa.trade_name }} quedó registrada.
+            {% else %}
+            Su cuenta quedó dentro de {{ empresa.trade_name }}, que ya es cliente de APOFYX.
+            {% endif %}
+            Nuestro equipo revisa el registro y aprueba su acceso; después podrá entrar con su correo y su clave.
+          </p>
+          <a class="btn btn-ap" href="{% url 'portal:entrar' %}">Ir al acceso de empresas</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

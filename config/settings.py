@@ -136,6 +136,10 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+# Las sesiones (del personal y de las empresas) viven en la base, en
+# django_session: es el motor por omision de Django. Duran una jornada.
+SESSION_COOKIE_AGE = 8 * 60 * 60
+
 LOGIN_URL = "panel:login"
 LOGIN_REDIRECT_URL = "panel:dashboard"
 LOGOUT_REDIRECT_URL = "site:home"
@@ -195,9 +199,11 @@ ASSISTANT = {
 # --- DataBridge ------------------------------------------------------------
 #
 # A donde APOFYX le pasa la cartera que recibe de sus clientes (contrato de
-# integracion, TB_web/docs/integracion/). Sin URL o sin clave, el reenvio
-# queda APAGADO y APOFYX sigue trabajando solo: recibe, valida y gestiona su
-# cartera, y el pago ocurre fuera, como antes. Es la regla R5 del contrato.
+# integracion, TB_web/docs/integracion/). La conexion (URL, clave y secreto de
+# los avisos) se hace desde el panel y queda en la base: ver
+# integracion/plataforma.py. Las tres variables de aqui abajo solo valen si
+# nunca se conecto desde el panel, y son lo que usan las pruebas. Sin conexion,
+# el reenvio queda APAGADO y APOFYX sigue trabajando solo (regla R5).
 
 DATABRIDGE = {
     "URL": env("DATABRIDGE_URL", ""),
@@ -213,7 +219,6 @@ DATABRIDGE = {
     # bandeja y lo retoma `manage.py despachar_reenvios`.
     "REENVIO_INMEDIATO": env_bool("DATABRIDGE_REENVIO_INMEDIATO", True),
     # Con el que DataBridge firma los eventos que le manda a APOFYX. Lo entrega
-    # DataBridge al suscribirse (manage.py suscribirse_a_databridge). Vacio =
-    # APOFYX no recibe eventos.
+    # DataBridge al suscribirse, que se hace al conectar desde el panel.
     "SECRETO_EVENTOS": env("DATABRIDGE_SECRETO_EVENTOS", ""),
 }

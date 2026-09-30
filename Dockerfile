@@ -68,6 +68,8 @@ USER apofyx
 EXPOSE 8000
 
 ENTRYPOINT ["/app/docker-entrada.sh"]
-#  Tres trabajadores: suficiente para una demostracion y para que una peticion
-#  lenta no deje al resto esperando.
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3"]
+#  Tres trabajadores con cuatro hilos cada uno. Con trabajadores "sync" sin
+#  hilos, cada conexion que el navegador abre por adelantado y deja ociosa
+#  bloquea un trabajador hasta 30 s: con dos pestanas abiertas, la cartera que
+#  llegaba por la API se quedaba esperando y el acreedor recibia un timeout.
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--threads", "4"]

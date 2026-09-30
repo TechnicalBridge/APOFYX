@@ -10,8 +10,9 @@ Esa clase compara el texto del DDL con las opciones de los modelos, sin tocar la
 base, porque ese desajuste no lo puede encontrar ninguna otra prueba de aqui.
 """
 
+import io
 import re
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.conf import settings as ajustes
@@ -19,32 +20,56 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
+
+from cartera.models import Batch, Debt, DebtCharge, Debtor
 
 from .esquema import clausula_check, ddl as leer_ddl, valores_del_enum
 from .forms import CreditorForm, LeadForm
-from .models import (
-    PortfolioHandover, Campaign, CampaignFunnelSnapshot, Creditor, CreditorContact,
-    Industry, Lead,
-)
+from .models import Campaign, CampaignFunnelSnapshot, Creditor, CreditorContact, Lead
 from .panel_views import adjuntar_cartera
 from .templatetags.cifras import pesos, uf
 
 
 def crear_empresa(**extra):
-    """Empresa minima viable, con rubro propio para no chocar con el unique."""
-    rubro = extra.pop("industry", None) or Industry.objects.create(
-        name=f"Rubro {Industry.objects.count()}",
-        slug=f"rubro-{Industry.objects.count()}",
-    )
+    """Empresa minima viable. Sin rubro: APOFYX no clasifica empresas."""
     datos = {
         "legal_name": "Vitalis Fitness SpA",
         "trade_name": "Vitalis Gym",
         "tax_id": "76543210-3",
-        "industry": rubro,
         "status": Creditor.Status.ACTIVE,
     }
     datos.update(extra)
     return Creditor.objects.create(**datos)
+
+
+def personal(cliente, usuario="operador"):
+    """Inicia sesion como alguien del equipo de APOFYX: el panel es solo del personal."""
+    User.objects.create_user(usuario, password="clave-larga-123", is_staff=True)
+    cliente.login(username=usuario, password="clave-larga-123")
+
+
+def dar_cartera(empresa, montos, corte=date(2026, 8, 18), moneda=Debt.Currency.CLP,
+                estado=Debt.Status.OPEN):
+    """
+    Una entrega con una deuda por cada monto: la cartera real de la empresa.
+    Cada deuda con un solo cargo vencido 40 dias antes del corte.
+    """
+    lote = Batch.objects.create(
+        creditor=empresa, external_id=f"LOTE-{Batch.objects.count() + 1}", cut_off=corte,
+        payload_hash="x" * 64,
+    )
+    for monto in montos:
+        n = Debtor.objects.count() + 1
+        deudor = Debtor.objects.create(tax_id=f"{10000000 + n}-1", full_name=f"Deudor {n}",
+                                       email=f"deudor{n}@correo.cl")
+        deuda = Debt.objects.create(
+            creditor=empresa, debtor=deudor, external_id=f"CTR-{n}", currency=moneda,
+            concept="Arriendo", first_batch=lote, last_batch=lote, status=estado,
+        )
+        DebtCharge.objects.create(debt=deuda, concept="Arriendo", amount=Decimal(monto),
+                                  due_date=corte - timedelta(days=40))
+    return lote
 
 
 # ==========================================================================
@@ -119,71 +144,41 @@ class ContactoPrincipalTest(TestCase):
         self.assertIsNone(self.empresa.contacto_principal)
 
 
-class CarteraTest(TestCase):
-    """
-    El ticket medio se pondera por cantidad de registros.
-
-    Es el calculo mas facil de equivocar del proyecto: promediar los tres
-    tramos daria un numero distinto y falso.
-    """
-
-    def setUp(self):
-        self.empresa = crear_empresa()
-        for tramo, registros, ticket in [
-            ("1-30", 3100, 38900), ("31-90", 2200, 42700), ("91-120", 900, 45100),
-        ]:
-            PortfolioHandover.objects.create(
-                creditor=self.empresa, period_month=date(2026, 8, 1),
-                overdue_bracket=tramo, debtor_count=registros,
-                average_debt_clp=Decimal(ticket),
-            )
-
-    def test_suma_los_registros_del_periodo(self):
-        self.assertEqual(self.empresa.cartera_actual["registros"], 6200)
-
-    def test_el_ticket_va_ponderado_y_no_promediado(self):
-        # Ponderado: (3100*38900 + 2200*42700 + 900*45100) / 6200
-        esperado = (3100 * 38900 + 2200 * 42700 + 900 * 45100) / 6200
-        promedio_simple = (38900 + 42700 + 45100) / 3
-        obtenido = float(self.empresa.cartera_actual["ticket"])
-
-        self.assertAlmostEqual(obtenido, esperado, places=2)
-        self.assertNotAlmostEqual(obtenido, promedio_simple, places=0)
-
-    def test_usa_solo_el_ultimo_periodo(self):
-        PortfolioHandover.objects.create(
-            creditor=self.empresa, period_month=date(2026, 9, 1),
-            overdue_bracket="1-30", debtor_count=100, average_debt_clp=Decimal(10000),
-        )
-        cartera = self.empresa.cartera_actual
-        self.assertEqual(cartera["periodo"], date(2026, 9, 1))
-        self.assertEqual(cartera["registros"], 100)
-
-    def test_sin_cartera_devuelve_none(self):
-        vacia = crear_empresa(tax_id="11111111-1", trade_name="Vacia")
-        self.assertIsNone(vacia.cartera_actual)
-
-
 class AdjuntarCarteraTest(TestCase):
-    """El helper del panel deja .cartera en cada objeto."""
+    """
+    El panel lee la cartera real de cada empresa: las deudas que APOFYX tiene
+    en gestion, no un agregado cargado a mano.
+    """
 
-    def test_empresa_sin_tramos_queda_en_cero(self):
+    def test_empresa_sin_cartera_queda_en_cero(self):
         empresa = crear_empresa()
         adjuntar_cartera([empresa])
         self.assertEqual(empresa.cartera["registros"], 0)
-        self.assertEqual(empresa.cartera["tramos"], [])
+        self.assertEqual(empresa.cartera["ticket"], 0)
         self.assertIsNone(empresa.cartera["periodo"])
 
-    def test_coincide_con_la_propiedad_del_modelo(self):
+    def test_cuenta_solo_las_deudas_en_gestion(self):
         empresa = crear_empresa()
-        PortfolioHandover.objects.create(
-            creditor=empresa, period_month=date(2026, 8, 1), overdue_bracket="1-30",
-            debtor_count=500, average_debt_clp=Decimal(20000),
-        )
+        dar_cartera(empresa, [40000, 60000])
+        dar_cartera(empresa, [99000], estado=Debt.Status.PAID)
         adjuntar_cartera([empresa])
-        self.assertEqual(
-            empresa.cartera["registros"], empresa.cartera_actual["registros"]
-        )
+        self.assertEqual(empresa.cartera["registros"], 2)
+        self.assertEqual(empresa.cartera["ticket"], 50000)
+
+    def test_el_ticket_no_mezcla_pesos_con_uf(self):
+        empresa = crear_empresa()
+        dar_cartera(empresa, [40000])
+        dar_cartera(empresa, [115], moneda=Debt.Currency.UF)
+        adjuntar_cartera([empresa])
+        self.assertEqual(empresa.cartera["registros"], 2)
+        self.assertEqual(empresa.cartera["ticket"], 40000)
+
+    def test_el_periodo_es_el_corte_de_la_ultima_entrega(self):
+        empresa = crear_empresa()
+        dar_cartera(empresa, [40000], corte=date(2026, 8, 18))
+        dar_cartera(empresa, [50000], corte=date(2026, 9, 18))
+        adjuntar_cartera([empresa])
+        self.assertEqual(empresa.cartera["periodo"], date(2026, 9, 18))
 
 
 class EmbudoCampanaTest(TestCase):
@@ -267,20 +262,16 @@ class LeadTest(TestCase):
 
 class LeadFormTest(TestCase):
 
-    def setUp(self):
-        self.rubro = Industry.objects.create(name="Gimnasios", slug="gimnasios")
-
     def datos(self, **extra):
         base = {
             "full_name": "Marcela Rios",
             "company_name": "Gimnasios Andino",
             "email": "mrios@andino.cl",
-            "industry": self.rubro.pk,
         }
         base.update(extra)
         return base
 
-    def test_los_cuatro_obligatorios_bastan(self):
+    def test_los_tres_obligatorios_bastan(self):
         self.assertTrue(LeadForm(data=self.datos()).is_valid())
 
     def test_el_resto_es_opcional(self):
@@ -313,13 +304,12 @@ class LeadFormTest(TestCase):
 
     def test_aplica_las_clases_de_bootstrap(self):
         form = LeadForm()
-        self.assertIn("form-select", form.fields["industry"].widget.attrs["class"])
+        self.assertIn("form-select", form.fields["current_collection_method"].widget.attrs["class"])
         self.assertIn("form-control", form.fields["full_name"].widget.attrs["class"])
 
-    def test_solo_ofrece_rubros_activos(self):
-        Industry.objects.create(name="Retirado", slug="retirado", is_active=False)
-        opciones = LeadForm().fields["industry"].queryset
-        self.assertNotIn("retirado", [r.slug for r in opciones])
+    def test_no_pregunta_el_rubro(self):
+        """APOFYX cobra para cualquier empresa: el rubro no cambia nada."""
+        self.assertNotIn("industry", LeadForm().fields)
 
 
 # ==========================================================================
@@ -329,12 +319,8 @@ class LeadFormTest(TestCase):
 class SitioPublicoTest(TestCase):
 
     def setUp(self):
-        self.rubro = Industry.objects.create(name="Gimnasios", slug="gimnasios")
-        self.empresa = crear_empresa(industry=self.rubro)
-        PortfolioHandover.objects.create(
-            creditor=self.empresa, period_month=date(2026, 8, 1), overdue_bracket="1-30",
-            debtor_count=6200, average_debt_clp=Decimal(41300),
-        )
+        self.empresa = crear_empresa()
+        dar_cartera(self.empresa, [41300, 38900, 42700])
         campana = Campaign.objects.create(
             creditor=self.empresa, name="Agosto", starts_on=date(2026, 8, 1),
             channels=["whatsapp"],
@@ -351,10 +337,18 @@ class SitioPublicoTest(TestCase):
     def test_las_cifras_salen_de_la_base(self):
         r = self.client.get(reverse("site:home"))
         cifras = r.context["cifras"]
-        self.assertEqual(cifras["cartera"], 6200)
+        self.assertEqual(cifras["cartera"], 3)
         self.assertEqual(cifras["empresas"], 1)
-        self.assertEqual(cifras["rubros"], 1)
         self.assertEqual(cifras["tasa_entrega"], 91.3)
+
+    def test_la_cifra_de_cartera_no_cuenta_lo_ya_pagado(self):
+        dar_cartera(self.empresa, [10000], estado=Debt.Status.PAID)
+        self.assertEqual(self.client.get(reverse("site:home")).context["cifras"]["cartera"], 3)
+
+    def test_invita_a_registrar_la_empresa(self):
+        r = self.client.get(reverse("site:home"))
+        self.assertContains(r, reverse("portal:registro"))
+        self.assertNotContains(r, "#rubros")
 
     def test_la_portada_no_vende_planes(self):
         """APOFYX no publica tarifas: el sitio lleva al formulario."""
@@ -378,7 +372,8 @@ class SitioPublicoTest(TestCase):
     def test_sin_datos_no_revienta(self):
         """Una base vacia no debe romper la portada ni dividir por cero."""
         CampaignFunnelSnapshot.objects.all().delete()
-        PortfolioHandover.objects.all().delete()
+        Debt.objects.all().delete()
+        Batch.objects.all().delete()
         Creditor.objects.all().delete()
         r = self.client.get(reverse("site:home"))
         self.assertEqual(r.status_code, 200)
@@ -391,7 +386,6 @@ class SitioPublicoTest(TestCase):
 class ContactoTest(TestCase):
 
     def setUp(self):
-        self.rubro = Industry.objects.create(name="Gimnasios", slug="gimnasios")
         self.url = reverse("site:contacto")
 
     def datos(self, **extra):
@@ -399,7 +393,6 @@ class ContactoTest(TestCase):
             "full_name": "Marcela Rios",
             "company_name": "Gimnasios Andino",
             "email": "mrios@andino.cl",
-            "industry": self.rubro.pk,
         }
         base.update(extra)
         return base
@@ -446,7 +439,7 @@ class ContactoTest(TestCase):
 # ==========================================================================
 
 class PanelAccesoTest(TestCase):
-    """Ninguna vista del panel se ve sin sesion."""
+    """Ninguna vista del panel se ve sin una sesion del personal."""
 
     def setUp(self):
         self.empresa = crear_empresa()
@@ -457,6 +450,7 @@ class PanelAccesoTest(TestCase):
             reverse("panel:clientes"),
             reverse("panel:cliente_detalle", args=[self.empresa.pk]),
             reverse("panel:leads"),
+            reverse("panel:plataforma"),
         ]
 
     def test_sin_sesion_redirige_al_login(self):
@@ -466,31 +460,40 @@ class PanelAccesoTest(TestCase):
             self.assertIn(reverse("panel:login"), r.url, ruta)
 
     def test_con_sesion_responde(self):
-        User.objects.create_user("operador", password="clave-larga-123")
-        self.client.login(username="operador", password="clave-larga-123")
+        personal(self.client)
         for ruta in self.rutas():
             self.assertEqual(self.client.get(ruta).status_code, 200, ruta)
+
+    def test_una_cuenta_de_empresa_no_ve_el_panel(self):
+        """Antes bastaba con haber iniciado sesion: una empresa habria visto a todas las demas."""
+        usuario = User.objects.create_user("gerente@vitalis.cl", password="clave-larga-123")
+        CreditorContact.objects.create(creditor=self.empresa, full_name="Gerente", email="gerente@vitalis.cl",
+                                       user=usuario, portal_access=CreditorContact.Access.GRANTED)
+        self.client.login(username="gerente@vitalis.cl", password="clave-larga-123")
+        for ruta in self.rutas():
+            r = self.client.get(ruta)
+            self.assertEqual(r.status_code, 302, ruta)
+            self.assertIn(reverse("panel:login"), r.url, ruta)
+
+    def test_el_login_del_panel_no_deja_entrar_a_una_empresa(self):
+        User.objects.create_user("gerente@vitalis.cl", password="clave-larga-123")
+        r = self.client.post(reverse("panel:login"),
+                             {"username": "gerente@vitalis.cl", "password": "clave-larga-123"})
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "no es del equipo de APOFYX")
 
 
 class PanelDatosTest(TestCase):
 
     def setUp(self):
-        User.objects.create_user("operador", password="clave-larga-123")
-        self.client.login(username="operador", password="clave-larga-123")
+        personal(self.client)
 
-        self.salud = Industry.objects.create(name="Salud", slug="salud")
-        self.gym = Industry.objects.create(name="Gimnasios", slug="gimnasios")
-
-        self.vitalis = crear_empresa(industry=self.gym)
+        self.vitalis = crear_empresa()
         self.clinica = crear_empresa(
             tax_id="76998877-7", trade_name="Clinica Sonrisa",
-            legal_name="Dentales SpA", industry=self.salud,
-            status=Creditor.Status.PAUSED,
+            legal_name="Dentales SpA", status=Creditor.Status.PAUSED,
         )
-        PortfolioHandover.objects.create(
-            creditor=self.vitalis, period_month=date(2026, 8, 1), overdue_bracket="1-30",
-            debtor_count=6200, average_debt_clp=Decimal(41300),
-        )
+        dar_cartera(self.vitalis, [41300, 38900, 42700])
         campana = Campaign.objects.create(
             creditor=self.vitalis, name="Agosto", starts_on=date(2026, 8, 1),
             status=Campaign.Status.RUNNING, channels=["whatsapp"],
@@ -511,7 +514,7 @@ class PanelDatosTest(TestCase):
         c = self.client.get(reverse("panel:dashboard")).context
         self.assertEqual(c["clientes_total"], 2)
         self.assertEqual(c["clientes_activos"], 1)   # la clinica esta pausada
-        self.assertEqual(c["cartera_total"], 6200)
+        self.assertEqual(c["cartera_total"], 3)
         self.assertEqual(c["campanas_en_curso"], 1)
         self.assertEqual(c["leads_nuevos"], 1)       # el otro esta contactado
 
@@ -523,6 +526,8 @@ class PanelDatosTest(TestCase):
         self.assertEqual(c["tasas"]["clic"], 20.0)
 
     def test_el_resumen_no_revienta_con_la_base_vacia(self):
+        Debt.objects.all().delete()
+        Batch.objects.all().delete()
         Creditor.objects.all().delete()
         Lead.objects.all().delete()
         r = self.client.get(reverse("panel:dashboard"))
@@ -535,11 +540,6 @@ class PanelDatosTest(TestCase):
         c = self.client.get(reverse("panel:clientes")).context
         self.assertEqual(len(c["empresas"]), 2)
         self.assertFalse(c["hay_filtros"])
-
-    def test_filtra_por_rubro(self):
-        c = self.client.get(reverse("panel:clientes"), {"rubro": "salud"}).context
-        self.assertEqual([e.trade_name for e in c["empresas"]], ["Clinica Sonrisa"])
-        self.assertTrue(c["hay_filtros"])
 
     def test_filtra_por_estado(self):
         c = self.client.get(reverse("panel:clientes"), {"estado": "paused"}).context
@@ -563,14 +563,15 @@ class PanelDatosTest(TestCase):
 
     def test_combina_filtros(self):
         c = self.client.get(
-            reverse("panel:clientes"), {"rubro": "salud", "estado": "active"}
+            reverse("panel:clientes"), {"q": "Dentales", "estado": "active"}
         ).context
-        self.assertEqual(len(c["empresas"]), 0)   # la de salud esta pausada
+        self.assertEqual(len(c["empresas"]), 0)   # la clinica esta pausada
+        self.assertTrue(c["hay_filtros"])
 
     def test_el_listado_adjunta_la_cartera(self):
         c = self.client.get(reverse("panel:clientes")).context
         por_nombre = {e.trade_name: e for e in c["empresas"]}
-        self.assertEqual(por_nombre["Vitalis Gym"].cartera["registros"], 6200)
+        self.assertEqual(por_nombre["Vitalis Gym"].cartera["registros"], 3)
         self.assertEqual(por_nombre["Clinica Sonrisa"].cartera["registros"], 0)
 
     # --- Ficha ---
@@ -579,7 +580,7 @@ class PanelDatosTest(TestCase):
         c = self.client.get(
             reverse("panel:cliente_detalle", args=[self.vitalis.pk])
         ).context
-        self.assertEqual(c["empresa"].cartera["registros"], 6200)
+        self.assertEqual(c["empresa"].cartera["registros"], 3)
         self.assertEqual(len(c["campanas"]), 1)
         self.assertEqual(c["campanas"][0]["embudo"]["enviados"], 1000)
 
@@ -611,10 +612,9 @@ class PanelDatosTest(TestCase):
 class ReprModelosCrmTest(TestCase):
     """Los __str__ salen en el admin y en los desplegables."""
 
-    def test_empresa_y_rubro(self):
+    def test_empresa(self):
         empresa = crear_empresa()
         self.assertEqual(str(empresa), "Vitalis Gym")
-        self.assertEqual(str(empresa.industry), empresa.industry.name)
 
     def test_contacto_nombra_a_su_empresa(self):
         empresa = crear_empresa()
@@ -623,14 +623,8 @@ class ReprModelosCrmTest(TestCase):
         )
         self.assertEqual(str(contacto), "Paulina Cortes (Vitalis Gym)")
 
-    def test_cartera_campana_y_metrica(self):
+    def test_campana_y_metrica(self):
         empresa = crear_empresa()
-        cartera = PortfolioHandover.objects.create(
-            creditor=empresa, period_month=date(2026, 8, 1), overdue_bracket="1-30",
-            debtor_count=10, average_debt_clp=Decimal(1000),
-        )
-        self.assertIn("2026-08", str(cartera))
-
         campana = Campaign.objects.create(
             creditor=empresa, name="Agosto", starts_on=date(2026, 8, 1),
             channels=["sms"],
@@ -666,10 +660,7 @@ class AdminCrmTest(TestCase):
             creditor=self.empresa, full_name="Paulina Cortes",
             email="p@v.cl", is_primary=True,
         )
-        PortfolioHandover.objects.create(
-            creditor=self.empresa, period_month=date(2026, 8, 1), overdue_bracket="1-30",
-            debtor_count=6200, average_debt_clp=Decimal(41300),
-        )
+        dar_cartera(self.empresa, [41300] * 3)
         campana = Campaign.objects.create(
             creditor=self.empresa, name="Agosto", starts_on=date(2026, 8, 1),
             channels=["whatsapp"],
@@ -686,15 +677,14 @@ class AdminCrmTest(TestCase):
             )
 
     def test_listados(self):
-        for modelo in ("industry", "creditor", "creditorcontact", "portfoliohandover",
-                       "campaign", "campaignfunnelsnapshot", "lead"):
+        for modelo in ("creditor", "creditorcontact", "campaign", "campaignfunnelsnapshot", "lead"):
             r = self.client.get(f"/admin/crm/{modelo}/")
             self.assertEqual(r.status_code, 200, modelo)
 
     def test_columnas_calculadas_del_listado_de_empresas(self):
         r = self.client.get("/admin/crm/creditor/")
         self.assertContains(r, "76.543.210-3")   # rut_formateado
-        self.assertContains(r, "6.200")          # cartera_registros
+        self.assertContains(r, '<td class="field-deudas_en_gestion">3</td>')
 
     def test_empresa_sin_cartera_muestra_guion(self):
         crear_empresa(tax_id="11111111-1", trade_name="Sin cartera")
@@ -728,15 +718,11 @@ class AdminCrmTest(TestCase):
 class CompanyFormTest(TestCase):
     """El RUT se normaliza al guardar; si no, el unique no sirve de nada."""
 
-    def setUp(self):
-        self.rubro = Industry.objects.create(name="Gimnasios", slug="gimnasios")
-
     def datos(self, **extra):
         base = {
             "trade_name": "Vitalis Gym",
             "legal_name": "Vitalis Fitness SpA",
             "tax_id": "76.543.210-3",
-            "industry": self.rubro.pk,
             "status": Creditor.Status.ACTIVE,
         }
         base.update(extra)
@@ -783,26 +769,21 @@ class CompanyFormTest(TestCase):
         form = CreditorForm(data=self.datos())
         self.assertTrue(form.is_valid(), form.errors)
 
-    def test_solo_ofrece_rubros_activos(self):
-        Industry.objects.create(name="Retirado", slug="retirado", is_active=False)
-        slugs = [r.slug for r in CreditorForm().fields["industry"].queryset]
-        self.assertNotIn("retirado", slugs)
+    def test_no_pide_rubro(self):
+        self.assertNotIn("industry", CreditorForm().fields)
 
 
 class PanelCrudTest(TestCase):
 
     def setUp(self):
-        User.objects.create_user("operador", password="clave-larga-123")
-        self.client.login(username="operador", password="clave-larga-123")
-        self.rubro = Industry.objects.create(name="Gimnasios", slug="gimnasios")
-        self.empresa = crear_empresa(industry=self.rubro)
+        personal(self.client)
+        self.empresa = crear_empresa()
 
     def datos_empresa(self, **extra):
         base = {
             "trade_name": "Nueva SpA",
             "legal_name": "Nueva Sociedad SpA",
             "tax_id": "77812341-K",
-            "industry": self.rubro.pk,
             "status": Creditor.Status.ONBOARDING,
         }
         base.update(extra)
@@ -971,12 +952,10 @@ class PaginacionTest(TestCase):
     """Sin tope, una base real dejaria los listados inservibles."""
 
     def setUp(self):
-        User.objects.create_user("operador", password="clave-larga-123")
-        self.client.login(username="operador", password="clave-larga-123")
-        rubro = Industry.objects.create(name="Gimnasios", slug="gimnasios")
+        personal(self.client)
         for i in range(30):
             crear_empresa(
-                industry=rubro, tax_id=f"7654321{i:02d}-1",
+                tax_id=f"7654321{i:02d}-1",
                 trade_name=f"Empresa {i:02d}",
             )
             Lead.objects.create(
@@ -1043,26 +1022,20 @@ class VariablesDePlantillaTest(TestCase):
     # Variables que legitimamente pueden no resolverse porque el dato es
     # opcional. La plantilla ya las cubre con |default, pero string_if_invalid
     # se adelanta al filtro y las marca igual, asi que hay que excusarlas.
-    OPCIONALES = {"lead.industry.name"}
+    OPCIONALES = set()
 
     def setUp(self):
-        User.objects.create_user("operador", password="clave-larga-123")
-        self.client.login(username="operador", password="clave-larga-123")
+        personal(self.client)
 
-        rubro = Industry.objects.create(name="Gimnasios", slug="gimnasios")
-        self.empresa = crear_empresa(industry=rubro)
+        self.empresa = crear_empresa()
         self.contacto = CreditorContact.objects.create(
             creditor=self.empresa, full_name="Paula Rios",
             job_title="Jefa de Cobranzas", email="paula@vitalis.cl",
             phone="+56 9 8888 7777", is_primary=True,
         )
-        # Un tramo de cada clase, para que la tabla de mora los imprima todos.
-        for bracket, deudores in PortfolioHandover.OverdueBracket.choices:
-            PortfolioHandover.objects.create(
-                creditor=self.empresa, period_month=date(2026, 8, 1),
-                overdue_bracket=bracket, debtor_count=1500,
-                average_debt_clp=Decimal(41300),
-            )
+        # Una deuda de cada estado, para que la ficha imprima todas sus etiquetas.
+        for estado in Debt.Status.values:
+            dar_cartera(self.empresa, [41300], estado=estado)
         campana = Campaign.objects.create(
             creditor=self.empresa, name="Agosto", starts_on=date(2026, 8, 1),
             status=Campaign.Status.RUNNING, channels=["whatsapp"],
@@ -1078,7 +1051,7 @@ class VariablesDePlantillaTest(TestCase):
         self.lead = Lead.objects.create(
             full_name="Rosa Ibanez", job_title="Jefa de Finanzas",
             company_name="Retail Austral SpA", email="rosa@austral.cl",
-            phone="+56 9 1111 2222", industry=rubro,
+            phone="+56 9 1111 2222",
             estimated_debtor_count=800, estimated_overdue_clp=Decimal(45000000),
             current_collection_method=Lead.CollectionMethod.LLAMADAS,
             source=Lead.Source.FORM, inquiry_message="Necesitamos ayuda.",
@@ -1093,7 +1066,10 @@ class VariablesDePlantillaTest(TestCase):
     def _revisar(self, url, datos=None, estado=200):
         respuesta = self.client.post(url, datos) if datos is not None             else self.client.get(url)
         self.assertEqual(respuesta.status_code, estado)
-        self.assertEqual(self._rotas(respuesta), [], f"variables rotas en {url}")
+        cuerpo = respuesta.content.decode("utf-8", "replace")
+        #  Donde quedo cada marca, para no tener que adivinar que variable fue.
+        donde = [cuerpo[max(0, m.start() - 120):m.end() + 40] for m in re.finditer(r"XXROTAXX\[", cuerpo)]
+        self.assertEqual(self._rotas(respuesta), [], f"variables rotas en {url}: {donde[:3]}")
         return respuesta
 
     # --- Sitio publico ---
@@ -1130,8 +1106,14 @@ class VariablesDePlantillaTest(TestCase):
         r = self._revisar(
             reverse("panel:cliente_detalle", args=[self.empresa.pk]))
         cuerpo = r.content.decode("utf-8")
-        for _, etiqueta in PortfolioHandover.OverdueBracket.choices:
+        for etiqueta in ("En gestión", "En convenio", "Pagada", "Retirada", "Disputada"):
             self.assertIn(etiqueta, cuerpo)
+
+    def test_la_conexion_con_la_plataforma_tampoco(self):
+        self._revisar(reverse("panel:plataforma"))
+
+    def test_el_formulario_de_campana_tampoco(self):
+        self._revisar(reverse("panel:campana_nueva", args=[self.empresa.pk]))
 
     def test_el_listado_de_leads_tampoco(self):
         """Aca vivia get_current_collection_display, tapado por |default."""
@@ -1181,7 +1163,7 @@ class EsquemaYModelosCalzan(TestCase):
     EQUIVALENCIAS = {
         ("crm_creditor", "status"): Creditor.Status,
         ("crm_campaign", "status"): Campaign.Status,
-        ("crm_portfoliohandover", "overdue_bracket"): PortfolioHandover.OverdueBracket,
+        ("crm_creditorcontact", "portal_access"): CreditorContact.Access,
         ("crm_lead", "source"): Lead.Source,
         ("crm_lead", "status"): Lead.Status,
         ("crm_lead", "current_collection_method"): Lead.CollectionMethod,
@@ -1273,3 +1255,270 @@ class CifrasTest(TestCase):
     def test_lo_que_no_es_numero_queda_en_blanco(self):
         self.assertEqual(pesos(None), "")
         self.assertEqual(uf("abc"), "")
+
+
+
+# ==========================================================================
+#  El portal de empresas
+# ==========================================================================
+
+from unittest import mock  # noqa: E402
+
+from integracion.models import ApiKey, Forward  # noqa: E402
+
+PLANILLA = (
+    "deuda_id;accion;motivo_retiro;deudor_rut;deudor_tipo;deudor_nombre;deudor_correo;deudor_telefono;"
+    "moneda;concepto;referencias;cargo_concepto;cargo_periodo;cargo_monto;cargo_vencimiento\n"
+    "CTR-9;registrar;;16482337-7;persona;Felipe Rojas;felipe@correo.cl;;CLP;Arriendo;;Agosto;2026-08;520000;2026-08-05\n"
+    "CTR-9;registrar;;16482337-7;persona;Felipe Rojas;felipe@correo.cl;;CLP;Arriendo;;Septiembre;2026-09;520000;2026-09-05\n"
+    "CTR-10;registrar;;18905214-6;persona;Valentina Soto;vale@correo.cl;;CLP;Arriendo;;;;;\n"
+)
+
+
+def registrar(cliente, **extra):
+    datos = {
+        "tax_id": "77.812.341-K", "legal_name": "Inmobiliaria Andes SpA", "trade_name": "Inmobiliaria Andes",
+        "full_name": "Laura Pérez", "email": "Laura@Andes.cl", "password1": "una-clave-bien-larga-9",
+        "password2": "una-clave-bien-larga-9",
+    }
+    datos.update(extra)
+    return cliente.post(reverse("portal:registro"), datos)
+
+
+def empresa_con_acceso(cliente, **extra):
+    """Una empresa registrada con su acceso aprobado y la sesion iniciada en el portal."""
+    registrar(cliente, **extra)
+    contacto = CreditorContact.objects.get(email="laura@andes.cl")
+    contacto.portal_access = CreditorContact.Access.GRANTED
+    contacto.save()
+    cliente.login(username="laura@andes.cl", password="una-clave-bien-larga-9")
+    return contacto.creditor, contacto
+
+
+class RegistroDeEmpresaTest(TestCase):
+    """Una empresa pide su cuenta sola; el personal la aprueba."""
+
+    def test_el_formulario_responde(self):
+        self.assertEqual(self.client.get(reverse("portal:registro")).status_code, 200)
+
+    def test_un_rut_nuevo_crea_la_empresa_en_incorporacion_con_el_acceso_por_aprobar(self):
+        r = registrar(self.client)
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "Recibimos su registro")
+        empresa = Creditor.objects.get(tax_id="77812341-K")
+        self.assertEqual(empresa.status, Creditor.Status.ONBOARDING)
+        contacto = empresa.contacts.get()
+        self.assertEqual(contacto.email, "laura@andes.cl")
+        self.assertTrue(contacto.is_primary)
+        self.assertEqual(contacto.portal_access, CreditorContact.Access.PENDING)
+        self.assertEqual(contacto.user.username, "laura@andes.cl")
+        self.assertFalse(contacto.user.is_staff)
+
+    def test_un_rut_que_ya_es_cliente_suma_la_persona_a_esa_empresa(self):
+        existente = crear_empresa(tax_id="77812341-K", trade_name="Andes de antes")
+        registrar(self.client, trade_name="Otro nombre")
+        self.assertEqual(Creditor.objects.filter(tax_id="77812341-K").count(), 1)
+        existente.refresh_from_db()
+        self.assertEqual(existente.trade_name, "Andes de antes")
+        self.assertEqual(existente.contacts.get().portal_access, CreditorContact.Access.PENDING)
+
+    def test_un_correo_con_cuenta_no_se_repite(self):
+        registrar(self.client)
+        r = registrar(self.client, tax_id="76543210-3")
+        self.assertContains(r, "ya tiene una cuenta")
+        self.assertEqual(User.objects.filter(username="laura@andes.cl").count(), 1)
+
+    def test_un_rut_con_el_digito_malo_no_entra(self):
+        r = registrar(self.client, tax_id="77.812.341-1")
+        self.assertContains(r, "verificador")
+        self.assertFalse(Creditor.objects.exists())
+
+    def test_una_clave_debil_no_entra(self):
+        r = registrar(self.client, password1="123", password2="123")
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(User.objects.exists())
+
+
+class EntrarAlPortalTest(TestCase):
+
+    def test_con_el_acceso_por_aprobar_dice_que_esta_en_revision(self):
+        registrar(self.client)
+        r = self.client.post(reverse("portal:entrar"),
+                             {"username": "laura@andes.cl", "password": "una-clave-bien-larga-9"})
+        self.assertContains(r, "en revisión")
+
+    def test_aprobado_entra_con_el_correo_escrito_como_sea(self):
+        registrar(self.client)
+        CreditorContact.objects.update(portal_access=CreditorContact.Access.GRANTED)
+        r = self.client.post(reverse("portal:entrar"),
+                             {"username": " LAURA@andes.cl ", "password": "una-clave-bien-larga-9"})
+        self.assertRedirects(r, reverse("portal:inicio"))
+
+    def test_el_personal_no_entra_por_el_portal(self):
+        User.objects.create_user("operador", password="clave-larga-123", is_staff=True)
+        r = self.client.post(reverse("portal:entrar"), {"username": "operador", "password": "clave-larga-123"})
+        self.assertContains(r, "no tiene acceso al portal")
+
+    def test_sin_sesion_el_portal_manda_a_entrar(self):
+        for ruta in ("portal:inicio", "portal:conexion", "portal:subir", "portal:datos"):
+            r = self.client.get(reverse(ruta))
+            self.assertEqual(r.status_code, 302, ruta)
+            self.assertIn(reverse("portal:entrar"), r.url, ruta)
+
+    def test_revocado_ya_no_entra(self):
+        empresa, contacto = empresa_con_acceso(self.client)
+        contacto.portal_access = CreditorContact.Access.REVOKED
+        contacto.save()
+        r = self.client.get(reverse("portal:inicio"))
+        self.assertEqual(r.status_code, 302)
+
+
+class PortalDeEmpresaTest(TestCase):
+
+    def setUp(self):
+        self.empresa, self.contacto = empresa_con_acceso(self.client)
+
+    def test_mi_cartera_muestra_lo_que_entrego(self):
+        dar_cartera(self.empresa, [520000, 410000])
+        r = self.client.get(reverse("portal:inicio"))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.context["recibida"]["deudas"]), 2)
+
+    def test_sin_cartera_explica_como_entregarla(self):
+        self.assertContains(self.client.get(reverse("portal:inicio")), "Todavía no nos entrega cartera")
+
+    def test_emitir_una_clave_la_muestra_una_vez_y_sirve_para_la_api(self):
+        r = self.client.post(reverse("portal:conexion"), {"accion": "emitir", "nombre": "Mi sistema"})
+        clave = r.context["clave_nueva"]
+        self.assertTrue(clave.startswith("apx_"))
+        self.assertContains(r, clave)
+        self.assertEqual(ApiKey.autenticar(clave).creditor, self.empresa)
+        self.assertNotContains(self.client.get(reverse("portal:conexion")), clave)
+
+    def test_revocar_una_clave(self):
+        clave, registro = ApiKey.emitir(self.empresa, "Vieja")
+        self.client.post(reverse("portal:conexion"), {"accion": "revocar", "clave": registro.pk})
+        self.assertIsNone(ApiKey.autenticar(clave))
+
+    def test_no_puede_revocar_la_clave_de_otra_empresa(self):
+        otra = crear_empresa(tax_id="76543210-3")
+        clave, registro = ApiKey.emitir(otra, "Ajena")
+        r = self.client.post(reverse("portal:conexion"), {"accion": "revocar", "clave": registro.pk})
+        self.assertEqual(r.status_code, 404)
+        self.assertIsNotNone(ApiKey.autenticar(clave))
+
+    def test_registrar_donde_recibe_los_avisos_muestra_el_secreto(self):
+        r = self.client.post(reverse("portal:conexion"),
+                             {"accion": "avisos", "url": "http://mi-sistema.cl/api/eventos"})
+        self.assertTrue(r.context["secreto_nuevo"].startswith("whsec_"))
+        self.assertEqual(self.empresa.subscriptions.get().url, "http://mi-sistema.cl/api/eventos")
+
+    def test_subir_la_planilla_entra_por_la_misma_ingesta(self):
+        archivo = io.BytesIO(PLANILLA.encode("utf-8"))
+        archivo.name = "cartera.csv"
+        r = self.client.post(reverse("portal:subir"), {"archivo": archivo, "fecha_corte": "2026-09-18"})
+        respuesta = r.context["respuesta"]
+        self.assertEqual(respuesta["lote"], "CSV-2026-09-18-1")
+        por_id = {x["id_externo"]: x["resultado"] for x in respuesta["resultados"]}
+        self.assertEqual(por_id, {"CTR-9": "registrada", "CTR-10": "al_dia"})
+        self.assertEqual(Batch.objects.get().source, Batch.Source.FILE)
+
+    def test_una_planilla_sin_las_columnas_dice_por_que(self):
+        archivo = io.BytesIO(b"email;monto\nx@x.cl;1\n")
+        archivo.name = "mala.csv"
+        r = self.client.post(reverse("portal:subir"), {"archivo": archivo, "fecha_corte": "2026-09-18"})
+        self.assertContains(r, "Faltan columnas")
+        self.assertFalse(Batch.objects.exists())
+
+    def test_la_segunda_planilla_del_dia_lleva_otro_numero(self):
+        for _ in range(2):
+            archivo = io.BytesIO(PLANILLA.replace("520000", "520001" if Batch.objects.exists() else "520000")
+                                 .encode("utf-8"))
+            archivo.name = "cartera.csv"
+            self.client.post(reverse("portal:subir"), {"archivo": archivo, "fecha_corte": "2026-09-18"})
+        self.assertEqual(sorted(Batch.objects.values_list("external_id", flat=True)),
+                         ["CSV-2026-09-18-1", "CSV-2026-09-18-2"])
+
+    def test_mis_datos_y_agregar_un_contacto(self):
+        self.assertContains(self.client.get(reverse("portal:datos")), "Inmobiliaria Andes SpA")
+        self.client.post(reverse("portal:contacto_nuevo"), {"full_name": "Pedro Soto", "email": "pedro@andes.cl"})
+        self.assertEqual(self.empresa.contacts.count(), 2)
+
+    def test_no_ve_ni_edita_los_contactos_de_otra_empresa(self):
+        otra = crear_empresa(tax_id="76543210-3")
+        ajeno = CreditorContact.objects.create(creditor=otra, full_name="Ajeno", email="a@otra.cl")
+        self.assertEqual(self.client.get(reverse("portal:contacto_editar", args=[ajeno.pk])).status_code, 404)
+
+    def test_no_puede_eliminar_su_propio_contacto(self):
+        self.client.post(reverse("portal:contacto_eliminar", args=[self.contacto.pk]))
+        self.assertTrue(CreditorContact.objects.filter(pk=self.contacto.pk).exists())
+
+
+class PanelApruebaYOrganizaTest(TestCase):
+    """Lo que el personal hace por una empresa nueva: aprobarla y darle campana."""
+
+    def setUp(self):
+        registrar(self.client)
+        self.empresa = Creditor.objects.get(tax_id="77812341-K")
+        self.contacto = self.empresa.contacts.get()
+        personal(self.client)
+
+    def test_el_resumen_avisa_los_accesos_por_aprobar(self):
+        r = self.client.get(reverse("panel:dashboard"))
+        self.assertEqual(list(r.context["accesos_pendientes"]), [self.contacto])
+        self.assertContains(r, "Aprobar")
+
+    def test_aprobar_da_acceso_y_activa_la_empresa(self):
+        self.client.post(reverse("panel:acceso_aprobar", args=[self.empresa.pk, self.contacto.pk]))
+        self.contacto.refresh_from_db()
+        self.empresa.refresh_from_db()
+        self.assertEqual(self.contacto.portal_access, CreditorContact.Access.GRANTED)
+        self.assertEqual(self.empresa.status, Creditor.Status.ACTIVE)
+
+    def test_quitar_el_acceso(self):
+        self.client.post(reverse("panel:acceso_aprobar", args=[self.empresa.pk, self.contacto.pk]))
+        self.client.post(reverse("panel:acceso_revocar", args=[self.empresa.pk, self.contacto.pk]))
+        self.contacto.refresh_from_db()
+        self.assertEqual(self.contacto.portal_access, CreditorContact.Access.REVOKED)
+
+    def test_crear_una_campana(self):
+        r = self.client.post(reverse("panel:campana_nueva", args=[self.empresa.pk]), {
+            "name": "Arriendos octubre", "starts_on": "2026-10-01", "status": "running",
+            "channels": ["whatsapp", "email"], "contact_attempts": 3,
+        })
+        self.assertRedirects(r, reverse("panel:cliente_detalle", args=[self.empresa.pk]))
+        campana = self.empresa.campaigns.get()
+        self.assertEqual(campana.channels, ["whatsapp", "email"])
+
+    def test_la_campana_nueva_trae_la_fecha_de_hoy_que_entiende_el_navegador(self):
+        # Un <input type="date"> solo acepta AAAA-MM-DD: con 29/09/2026 se ve vacio.
+        r = self.client.get(reverse("panel:campana_nueva", args=[self.empresa.pk]))
+        self.assertContains(r, f'value="{timezone.localdate().isoformat()}"')
+
+    def test_una_campana_con_nombre_repetido_no_se_crea(self):
+        Campaign.objects.create(creditor=self.empresa, name="Arriendos", starts_on=date(2026, 9, 1))
+        r = self.client.post(reverse("panel:campana_nueva", args=[self.empresa.pk]), {
+            "name": "Arriendos", "starts_on": "2026-10-01", "status": "running",
+            "channels": ["email"], "contact_attempts": 3,
+        })
+        self.assertContains(r, "ya tiene una campaña con ese nombre")
+
+    def test_la_entrega_que_esperaba_campana_sale_al_crearla(self):
+        lote = dar_cartera(self.empresa, [520000])
+        forward = Forward.objects.create(batch=lote, external_id="APX-1",
+                                         status=Forward.Status.WAITING_CAMPAIGN)
+        with mock.patch("integracion.reenvio.despachar") as despachar:
+            despachar.return_value = forward
+            self.client.post(reverse("panel:campana_nueva", args=[self.empresa.pk]), {
+                "name": "Arriendos octubre", "starts_on": "2026-10-01", "status": "running",
+                "channels": ["email"], "contact_attempts": 3,
+            })
+        despachar.assert_called_once_with(forward.pk)
+
+    def test_cambiar_el_estado_de_una_campana(self):
+        campana = Campaign.objects.create(creditor=self.empresa, name="Arriendos", starts_on=date(2026, 9, 1),
+                                          status=Campaign.Status.RUNNING)
+        self.client.post(reverse("panel:campana_estado", args=[self.empresa.pk, campana.pk]),
+                         {"estado": "finished"})
+        campana.refresh_from_db()
+        self.assertEqual(campana.status, Campaign.Status.FINISHED)

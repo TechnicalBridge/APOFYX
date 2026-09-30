@@ -21,16 +21,15 @@ from django.db import DataError, IntegrityError, connection, transaction
 from django.test import TestCase
 
 from crm.esquema import valores_del_enum
-from crm.models import Creditor, Industry
+from crm.models import Creditor
 
 from .models import Batch, Debt, DebtCharge, Debtor
 
 
 def crear_acreedor():
-    rubro = Industry.objects.create(name="Corretaje y arriendos", slug="arriendos")
     return Creditor.objects.create(
         legal_name="Patrimonio Inmuebles SpA", trade_name="Patrimonio Inmuebles",
-        tax_id="76418902-7", industry=rubro, status=Creditor.Status.ACTIVE,
+        tax_id="76418902-7", status=Creditor.Status.ACTIVE,
     )
 
 
@@ -132,11 +131,8 @@ class LaBaseRechazaLoQueNoCorresponde(TestCase):
             )
 
 
-class LosTramosCalzanConElPanel(TestCase):
-    """
-    Los tramos son los mismos de crm_portfoliohandover. Si se separaran, la
-    entrega y el panel estarian contando cosas distintas con el mismo nombre.
-    """
+class LosTramosDeMora(TestCase):
+    """Los tramos con que APOFYX prioriza, y el que ya queda fuera de su mandato."""
 
     def test_cada_mora_cae_en_su_tramo(self):
         self.assertEqual(Debt.tramo(1), "1-30")
@@ -147,12 +143,9 @@ class LosTramosCalzanConElPanel(TestCase):
         self.assertEqual(Debt.tramo(120), "91-120")
         self.assertEqual(Debt.tramo(121), ">120")
 
-    def test_los_tres_primeros_son_los_del_ddl(self):
-        del_panel = valores_del_enum("crm_portfoliohandover", "overdue_bracket")
-        self.assertEqual(
-            {Debt.tramo(15), Debt.tramo(60), Debt.tramo(100)}, del_panel,
-            "Los tramos de la cartera y los de crm_portfoliohandover se separaron.",
-        )
+    def test_son_los_del_contrato(self):
+        """Los mismos del contrato de integracion (seccion 6.4): la plataforma habla de lo mismo."""
+        self.assertEqual({Debt.tramo(15), Debt.tramo(60), Debt.tramo(100)}, {"1-30", "31-90", "91-120"})
 
 
 @skipUnless(connection.vendor == "mysql", "v_deuda_features es una vista de MySQL")

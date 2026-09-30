@@ -1,0 +1,82 @@
+{% extends "panel/base_panel.html" %}
+
+{% block titulo_panel %}Plataforma de pagos{% endblock %}
+{% block rotulo %}Integración{% endblock %}
+{% block encabezado %}Plataforma de pagos{% endblock %}
+
+{% block panel %}
+
+<div class="row g-5">
+    <div class="col-lg-6">
+        {% if actual %}
+        <h2 class="ap-h3 mb-3">Conectada con {{ actual.platform_name }}</h2>
+        <table class="ap-tabla ap-tabla--ficha mb-3">
+            <tbody>
+                <tr><th>Dirección</th><td class="ap-mono">{{ actual.url }}</td></tr>
+                {% if actual.platform_rut %}<tr><th>RUT</th><td class="ap-mono">{{ actual.platform_rut }}</td></tr>{% endif %}
+                <tr><th>Conectada</th><td>{{ actual.connected_at|date:"d/m/Y H:i" }}</td></tr>
+                <tr><th>Avisos de pago</th><td>{% if actual.events_secret %}Suscrita{% else %}Sin suscripción{% endif %}</td></tr>
+            </tbody>
+        </table>
+        <form method="post" class="mb-5">
+            {% csrf_token %}
+            <input type="hidden" name="accion" value="desconectar">
+            <button class="btn btn-ap-linea" type="submit">Desconectar</button>
+        </form>
+        <h2 class="ap-h3 mb-3">Cambiar la conexión</h2>
+        {% else %}
+        <h2 class="ap-h3 mb-3">Conectar APOFYX</h2>
+        <p class="ap-nota">
+            Mientras APOFYX no esté conectada, las carteras que entregan las empresas se reciben y se
+            gestionan, pero no pasan a la plataforma de pagos, y los deudores no pueden pagar en línea.
+        </p>
+        {% endif %}
+
+        <form method="post" novalidate>
+            {% csrf_token %}
+            <input type="hidden" name="accion" value="conectar">
+            {% for error in form.non_field_errors %}<p class="ap-aviso ap-aviso--error">{{ error }}</p>{% endfor %}
+            {% for campo in form %}
+            <div class="mb-3">
+                <label class="form-label" for="{{ campo.id_for_label }}">{{ campo.label }}</label>
+                {{ campo }}
+                {% if campo.help_text %}<div class="form-text">{{ campo.help_text }}</div>{% endif %}
+                {% for error in campo.errors %}<div class="ap-error mt-1">{{ error }}</div>{% endfor %}
+            </div>
+            {% endfor %}
+            <button class="btn btn-ap" type="submit">Conectar</button>
+        </form>
+    </div>
+
+    <div class="col-lg-6">
+        <h2 class="ap-h3 mb-3">Qué pasa al conectar</h2>
+        <ol class="ap-nota">
+            <li>La plataforma comprueba la clave y confirma que es de APOFYX.</li>
+            <li>APOFYX se suscribe a sus avisos de pago, en la dirección que indicaste.</li>
+            <li>Desde ese momento, cada cartera que APOFYX acepta pasa a la plataforma, y los pagos vuelven
+                hasta la empresa que la entregó. No hay que reiniciar nada.</li>
+        </ol>
+        <p class="ap-micro">
+            La clave la emite la plataforma: en DataBridge, en el portal de la empresa, sección
+            <em>Claves de API</em>.
+        </p>
+
+        {% if esperando %}
+        <h2 class="ap-h3 mt-4 mb-3">Reenvíos sin entregar</h2>
+        <table class="ap-tabla">
+            <thead><tr><th>Entrega</th><th>Empresa</th><th>Estado</th></tr></thead>
+            <tbody>
+                {% for forward in esperando %}
+                <tr>
+                    <td class="ap-mono">{{ forward.batch.external_id }}</td>
+                    <td>{{ forward.batch.creditor.trade_name }}</td>
+                    <td>{{ forward.get_status_display }}<span class="ap-micro d-block">{{ forward.last_error|default:"" }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}

@@ -2,8 +2,8 @@
 Vistas del sitio publico de APOFYX.
 
 MVT clasico: la vista consulta los modelos y entrega el contexto; la plantilla
-se encarga de mostrarlo. Nada de datos escritos a mano en el HTML: rubros,
-clientes y cifras salen de la base.
+se encarga de mostrarlo. Nada de datos escritos a mano en el HTML: clientes y
+cifras salen de la base.
 """
 
 from django.contrib import messages
@@ -11,7 +11,9 @@ from django.db.models import Sum
 from django.shortcuts import redirect, render
 
 from .forms import LeadForm
-from .models import PortfolioHandover, CampaignFunnelSnapshot, Creditor, Industry, Lead
+from cartera.models import Debt
+
+from .models import CampaignFunnelSnapshot, Creditor, Lead
 
 
 # Los pasos del servicio son texto editorial, no datos: viven aca y no en la
@@ -20,8 +22,8 @@ PASOS = [
     {
         "numero": "01",
         "titulo": "Nos entrega su cartera",
-        "texto": "Sube un archivo CSV desde su panel o conecta su sistema por API. "
-                 "Normalizamos RUT, telefonos y correos, y eliminamos duplicados.",
+        "texto": "Registra su empresa y, desde su portal, sube su planilla o conecta su "
+                 "sistema por API. Validamos RUT, telefonos y correos, y eliminamos duplicados.",
     },
     {
         "numero": "02",
@@ -57,19 +59,11 @@ def _cifras():
     Salen de la base, no estan escritas en la plantilla: si cambian los datos,
     cambia el sitio.
     """
-    ultimo_periodo = (
-        PortfolioHandover.objects.order_by("-period_month")
-        .values_list("period_month", flat=True)
-        .first()
+    #  Los deudores que APOFYX tiene en gestion hoy, de la cartera real.
+    cartera = (
+        Debt.objects.filter(status__in=(Debt.Status.OPEN, Debt.Status.REPACTED, Debt.Status.DISPUTED))
+        .values("debtor").distinct().count()
     )
-
-    cartera = 0
-    if ultimo_periodo:
-        cartera = (
-            PortfolioHandover.objects.filter(period_month=ultimo_periodo)
-            .aggregate(total=Sum("debtor_count"))["total"]
-            or 0
-        )
 
     totales = CampaignFunnelSnapshot.objects.aggregate(
         enviados=Sum("messages_sent"), entregados=Sum("messages_delivered")
@@ -83,7 +77,6 @@ def _cifras():
         "mensajes": enviados,
         # La tasa de entrega es la cifra que APOFYX si puede medir con certeza.
         "tasa_entrega": round(100 * entregados / enviados, 1) if enviados else 0,
-        "rubros": Industry.objects.filter(is_active=True).count(),
     }
 
 
@@ -96,7 +89,6 @@ def _contexto_portada(form=None):
     cada cliente, pero solo se ven en el panel.
     """
     return {
-        "rubros": Industry.objects.filter(is_active=True),
         "clientes": Creditor.objects.filter(
             status=Creditor.Status.ACTIVE
         ).order_by("trade_name"),
@@ -107,7 +99,7 @@ def _contexto_portada(form=None):
 
 
 def home(request):
-    """Portada: problema, solucion, proceso, rubros, cumplimiento y contacto."""
+    """Portada: problema, solucion, proceso, a quienes servimos, cumplimiento y contacto."""
     return render(request, "site/home.html", _contexto_portada())
 
 

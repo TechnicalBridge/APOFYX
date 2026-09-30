@@ -631,6 +631,15 @@ a { text-decoration: none; }
 }
 .ap-aviso--success { border-color: rgba(127, 214, 169, .35); color: #7fd6a9; }
 .ap-aviso--error   { border-color: rgba(224, 138, 122, .35); color: #e08a7a; }
+.ap-aviso--warning { border-color: rgba(201, 169, 97, .45); }
+.ap-aviso--info    { border-color: rgba(79, 179, 194, .35); }
+
+/* Una clave o un secreto que se muestra una sola vez: se puede seleccionar entero. */
+.ap-secreto {
+    display: block; padding: .6rem .8rem; margin: .5rem 0; border-radius: 4px;
+    background: rgba(255, 255, 255, .06); font-family: var(--ap-mono); font-size: .85rem;
+    color: #fff; word-break: break-all; user-select: all;
+}
 
 .ap-paginacion {
     display: flex; align-items: center; justify-content: center; gap: 1.5rem;

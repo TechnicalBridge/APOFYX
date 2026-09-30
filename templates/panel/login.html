@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block titulo %}Acceso clientes — APOFYX{% endblock %}
+{% block titulo %}Acceso equipo — APOFYX{% endblock %}
 {% block navegacion %}
 <li class="nav-item"><a class="nav-link" href="{% url 'site:home' %}">Volver al sitio</a></li>
 {% endblock %}
@@ -12,13 +12,13 @@
       <div class="col-md-8 col-lg-5 revelar">
         <div class="ap-panel p-4 p-lg-5">
           <span class="ap-etiqueta mb-3">Panel</span>
-          <h1 class="h3 mb-4">Acceso clientes</h1>
+          <h1 class="h3 mb-2">Acceso del equipo</h1>
+          <p class="ap-micro mb-4">Para el personal de APOFYX. Si es una empresa cliente, entre por el
+            <a href="{% url 'portal:entrar' %}">portal de empresas</a>.</p>
 
-          {% if form.errors %}
-          <div class="alert alert-danger py-2 px-3 small" role="alert">
-            Usuario o contrasena incorrectos.
-          </div>
-          {% endif %}
+          {% for error in form.non_field_errors %}
+          <div class="alert alert-danger py-2 px-3 small" role="alert">{{ error }}</div>
+          {% endfor %}
 
           <form method="post">
             {% csrf_token %}

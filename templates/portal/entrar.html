@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block titulo %}Acceso empresas — APOFYX{% endblock %}
+{% block navegacion %}
+<li class="nav-item"><a class="nav-link" href="{% url 'site:home' %}">Volver al sitio</a></li>
+{% endblock %}
+
+{% block contenido %}
+<section class="ap-seccion">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-md-8 col-lg-5 revelar">
+        <div class="ap-panel p-4 p-lg-5">
+          <span class="ap-etiqueta mb-3">Portal de empresas</span>
+          <h1 class="h3 mb-4">Acceso empresas</h1>
+
+          {% for error in form.non_field_errors %}
+          <div class="alert alert-danger py-2 px-3 small" role="alert">{{ error }}</div>
+          {% endfor %}
+
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ next }}">
+            <div class="mb-3">
+              <label class="form-label" for="{{ form.username.id_for_label }}">Correo</label>
+              {{ form.username }}
+            </div>
+            <div class="mb-4">
+              <label class="form-label" for="{{ form.password.id_for_label }}">Clave</label>
+              {{ form.password }}
+            </div>
+            <button class="btn btn-ap w-100 btn-lg" type="submit">Entrar</button>
+          </form>
+
+          <p class="ap-micro mt-4 mb-0">
+            ¿Su empresa todavía no tiene cuenta? <a href="{% url 'portal:registro' %}">Regístrela aquí</a>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

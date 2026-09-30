@@ -31,7 +31,6 @@
             <tbody>
                 <tr><th>Razón social</th><td>{{ empresa.legal_name }}</td></tr>
                 <tr><th>RUT</th><td class="ap-mono">{{ empresa.rut_formateado }}</td></tr>
-                <tr><th>Rubro</th><td>{{ empresa.industry.name }}</td></tr>
                 <tr><th>Comuna</th><td>{{ empresa.commune|default:"—" }}{% if empresa.region %}, {{ empresa.region }}{% endif %}</td></tr>
                 <tr><th>Alta</th><td>{{ empresa.client_since|date:"d/m/Y"|default:"—" }}</td></tr>
                 <tr>
@@ -45,21 +44,35 @@
             </tbody>
         </table>
 
-        <h2 class="ap-h3 mb-3">Contactos</h2>
+        <h2 class="ap-h3 mb-3">Contactos y accesos</h2>
         <div class="ap-lista-compacta mb-4">
             {% for contacto in empresa.contacts.all %}
-            <div class="d-flex justify-content-between gap-3">
-                <div>
-                    <strong>{{ contacto.full_name }}</strong>
-                    {% if contacto.is_primary %}<span class="ap-marca-principal">principal</span>{% endif %}
-                    <span class="ap-micro d-block">{{ contacto.job_title|default:"—" }}</span>
-                    <span class="ap-micro d-block">
-                        <a href="mailto:{{ contacto.email }}">{{ contacto.email }}</a>
-                        {% if contacto.phone %} · {{ contacto.phone }}{% endif %}
-                    </span>
+            {# En una columna angosta: los datos arriba y las acciones debajo, sin empujarse. #}
+            <div>
+                <strong>{{ contacto.full_name }}</strong>
+                {% if contacto.is_primary %}<span class="ap-marca-principal">principal</span>{% endif %}
+                <span class="ap-micro d-block">{{ contacto.job_title|default:"—" }}</span>
+                <span class="ap-micro d-block text-break">
+                    <a href="mailto:{{ contacto.email }}">{{ contacto.email }}</a>
+                    {% if contacto.phone %} · {{ contacto.phone }}{% endif %}
+                </span>
+                {% if contacto.portal_access %}
+                <span class="ap-micro d-block">Portal: {{ contacto.get_portal_access_display|lower }}</span>
+                {% endif %}
+                <div class="d-flex flex-wrap align-items-center gap-3 mt-2">
+                    <a class="ap-micro" href="{% url 'panel:contacto_editar' empresa.pk contacto.pk %}">Editar</a>
+                    {% if contacto.user_id and contacto.portal_access != 'granted' %}
+                    <form method="post" action="{% url 'panel:acceso_aprobar' empresa.pk contacto.pk %}">
+                        {% csrf_token %}
+                        <button class="btn btn-ap btn-sm" type="submit">Aprobar acceso</button>
+                    </form>
+                    {% elif contacto.user_id %}
+                    <form method="post" action="{% url 'panel:acceso_revocar' empresa.pk contacto.pk %}">
+                        {% csrf_token %}
+                        <button class="btn btn-ap-linea btn-sm" type="submit">Quitar acceso</button>
+                    </form>
+                    {% endif %}
                 </div>
-                <a class="ap-micro flex-shrink-0"
-                   href="{% url 'panel:contacto_editar' empresa.pk contacto.pk %}">Editar</a>
             </div>
             {% empty %}
             <p class="ap-micro mb-0">Sin contactos cargados.</p>
@@ -79,43 +92,37 @@
             {% endif %}
         </h2>
 
+        {% if esperando_campana %}
+        <div class="ap-aviso ap-aviso--warning mb-4">
+            {{ esperando_campana|length }} entrega{{ esperando_campana|length|pluralize }} espera{{ esperando_campana|length|pluralize:"n" }}
+            una campaña para pasar a la plataforma de pagos
+            ({% for f in esperando_campana %}{{ f.batch.external_id }}{% if not forloop.last %}, {% endif %}{% endfor %}).
+            {% if empresa.campaigns.all %}
+            <form method="post" action="{% url 'panel:entregas_asignar' empresa.pk %}" class="d-flex flex-wrap gap-2 mt-2">
+                {% csrf_token %}
+                <select class="form-select" name="campana" style="max-width: 20rem">
+                    {% for c in empresa.campaigns.all %}
+                    <option value="{{ c.pk }}">{{ c.name }} ({{ c.get_status_display|lower }})</option>
+                    {% endfor %}
+                </select>
+                <button class="btn btn-ap" type="submit">Asignar y reenviar</button>
+            </form>
+            {% else %}
+            Créale una campaña más abajo.
+            {% endif %}
+        </div>
+        {% endif %}
+
         {% if recibida %}
         {% include "panel/_cartera_recibida.html" %}
-        {% elif empresa.cartera.registros %}
-        <div class="ap-kpis ap-kpis--dos mb-4">
-            <div class="ap-kpi">
-                <span class="ap-kpi__valor">{{ empresa.cartera.registros }}</span>
-                <span class="ap-kpi__texto">Deudores en gestión</span>
-            </div>
-            <div class="ap-kpi">
-                <span class="ap-kpi__valor">{{ empresa.cartera.ticket|pesos }}</span>
-                <span class="ap-kpi__texto">Ticket medio ponderado</span>
-            </div>
-        </div>
-
-        <table class="ap-tabla mb-2">
-            <thead>
-                <tr><th>Tramo de mora</th><th class="ap-num">Registros</th><th class="ap-num">Ticket medio</th></tr>
-            </thead>
-            <tbody>
-                {% for tramo in empresa.cartera.tramos %}
-                <tr>
-                    <td>{{ tramo.get_overdue_bracket_display }}</td>
-                    <td class="ap-num">{{ tramo.debtor_count }}</td>
-                    <td class="ap-num">{{ tramo.average_debt_clp|pesos }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        <p class="ap-micro mb-4">
-            El ticket medio de arriba está ponderado por cantidad de registros, no
-            es el promedio simple de los tres tramos.
-        </p>
         {% else %}
         <p class="ap-micro mb-4">Esta empresa todavía no ha entregado cartera.</p>
         {% endif %}
 
-        <h2 class="ap-h3 mb-3">Campañas</h2>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2 class="ap-h3 mb-0">Campañas</h2>
+            <a class="btn btn-ap-linea" href="{% url 'panel:campana_nueva' empresa.pk %}">Nueva campaña</a>
+        </div>
         {% for fila in campanas %}
         <div class="ap-campana">
             <div class="ap-campana__cabecera">
@@ -127,7 +134,16 @@
                         · {{ fila.campana.contact_attempts }} toques
                     </span>
                 </div>
-                <span class="ap-estado ap-estado--{{ fila.campana.status }}">{{ fila.campana.get_status_display }}</span>
+                <form method="post" action="{% url 'panel:campana_estado' empresa.pk fila.campana.pk %}" class="d-flex gap-2">
+                    {% csrf_token %}
+                    <label class="visually-hidden" for="estado-{{ fila.campana.pk }}">Estado</label>
+                    <select class="form-select form-select-sm" id="estado-{{ fila.campana.pk }}" name="estado">
+                        {% for valor, etiqueta in estados_campana %}
+                        <option value="{{ valor }}" {% if valor == fila.campana.status %}selected{% endif %}>{{ etiqueta }}</option>
+                        {% endfor %}
+                    </select>
+                    <button class="btn btn-ap-linea btn-sm" type="submit">Cambiar</button>
+                </form>
             </div>
 
             {% if fila.embudo %}
@@ -143,7 +159,10 @@
             {% endif %}
         </div>
         {% empty %}
-        <p class="ap-micro">Esta empresa no tiene campañas.</p>
+        <p class="ap-micro">
+            Esta empresa no tiene campañas. Una entrega pasa a la plataforma de pagos cuando la empresa
+            tiene exactamente una campaña en curso.
+        </p>
         {% endfor %}
     </div>
 </div>

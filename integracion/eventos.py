@@ -56,6 +56,10 @@ ESTADO_POR_EVENTO = {
 # vuelve atras porque despues llegue un aviso de repactacion que ocurrio antes.
 FINALES = {Debt.Status.PAID, Debt.Status.WITHDRAWN}
 
+#  Los avisos a los que se puede suscribir un cliente: los que cambian el estado
+#  de una deuda, y el del pago, que no lo cambia pero el cliente lo necesita.
+TIPOS = sorted({*ESTADO_POR_EVENTO, "pago.confirmado"})
+
 
 class EventoInvalido(Exception):
     def __init__(self, mensaje):

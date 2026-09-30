@@ -33,10 +33,10 @@
                 <td class="ap-num">{{ entrega.accepted_count }}</td>
                 <td class="ap-num">{{ entrega.rejected_count }}</td>
                 <td>
-                    {% if entrega.forward %}
-                    {{ entrega.forward.get_status_display }}
-                    {% if entrega.forward.response.recibidas %}
-                    <span class="ap-micro d-block">{{ entrega.forward.response.aceptadas }} de {{ entrega.forward.response.recibidas }} aceptadas</span>
+                    {% if entrega.reenvio %}
+                    {{ entrega.reenvio.get_status_display }}
+                    {% if entrega.reenvio.response.recibidas %}
+                    <span class="ap-micro d-block">{{ entrega.reenvio.response.aceptadas }} de {{ entrega.reenvio.response.recibidas }} aceptadas</span>
                     {% endif %}
                     {% else %}
                     <span class="ap-micro">No se reenvía</span>

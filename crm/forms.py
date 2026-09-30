@@ -1,9 +1,35 @@
-"""Formularios del sitio publico y del panel."""
+"""Formularios del sitio publico, del panel y del portal de empresas."""
 
 from django import forms
+from django.contrib.auth import get_user_model
+from django.contrib.auth.forms import AuthenticationForm
+from django.contrib.auth.password_validation import validate_password
+from django.utils import timezone
 
-from .models import Creditor, CreditorContact, Industry, Lead
+from .models import Campaign, Creditor, CreditorContact, Lead
 from .rut import es_valido, normalizar, tiene_formato
+
+
+def rut_limpio(valor):
+    """El RUT en la forma canonica (sin puntos, con guion, K mayuscula), o un error que dice por que no."""
+    limpio = normalizar(valor)
+    if not tiene_formato(limpio):
+        raise forms.ValidationError(
+            "Formato no valido. Se espera algo como 76.543.210-3 o 76543210-3."
+        )
+    if not es_valido(limpio):
+        raise forms.ValidationError(
+            "El digito verificador no corresponde a ese RUT. Revisalo."
+        )
+    return limpio
+
+
+def campo_fecha():
+    """
+    El selector de fecha del navegador. Solo entiende AAAA-MM-DD: con el formato
+    local (29/09/2026) el campo se mostraria vacio aunque tenga valor.
+    """
+    return forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d")
 
 
 class LeadForm(forms.ModelForm):
@@ -17,7 +43,7 @@ class LeadForm(forms.ModelForm):
         fields = [
             "full_name", "job_title",
             "company_name", "email",
-            "phone", "industry",
+            "phone",
             "estimated_debtor_count", "estimated_overdue_clp",
             "current_collection_method", "inquiry_message",
         ]
@@ -34,8 +60,6 @@ class LeadForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["industry"].queryset = Industry.objects.filter(is_active=True)
-        self.fields["industry"].empty_label = "Seleccione su rubro"
         self.fields["current_collection_method"].empty_label = "Seleccione una opcion"
 
         # Solo se exige lo minimo para poder responder. Los demas campos
@@ -68,37 +92,27 @@ class CreditorForm(forms.ModelForm):
     class Meta:
         model = Creditor
         fields = [
-            "trade_name", "legal_name", "tax_id", "industry", "status",
+            "trade_name", "legal_name", "tax_id", "status",
             "client_since", "commune", "region", "website", "internal_notes",
         ]
         widgets = {
             "trade_name": forms.TextInput(attrs={"placeholder": "Como se le conoce"}),
             "legal_name": forms.TextInput(attrs={"placeholder": "Razon social completa"}),
             "tax_id": forms.TextInput(attrs={"placeholder": "76.543.210-3"}),
-            "client_since": forms.DateInput(attrs={"type": "date"}),
+            "client_since": campo_fecha(),
             "website": forms.URLInput(attrs={"placeholder": "https://"}),
             "internal_notes": forms.Textarea(attrs={"rows": 3}),
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["industry"].queryset = Industry.objects.filter(is_active=True)
         for opcional in ("client_since", "commune", "region", "website", "internal_notes"):
             self.fields[opcional].required = False
         _aplicar_clases(self.fields)
 
     def clean_tax_id(self):
         """Deja el RUT en la forma canonica (sin puntos, con guion, K mayuscula) y valido."""
-        limpio = normalizar(self.cleaned_data["tax_id"])
-        if not tiene_formato(limpio):
-            raise forms.ValidationError(
-                "Formato no valido. Se espera algo como 76.543.210-3 o 76543210-3."
-            )
-        if not es_valido(limpio):
-            raise forms.ValidationError(
-                "El digito verificador no corresponde a ese RUT. Revisalo."
-            )
-        return limpio
+        return rut_limpio(self.cleaned_data["tax_id"])
 
 
 class CreditorContactForm(forms.ModelForm):
@@ -118,6 +132,155 @@ class CreditorContactForm(forms.ModelForm):
         for opcional in ("job_title", "phone"):
             self.fields[opcional].required = False
         _aplicar_clases(self.fields)
+
+
+class RegistroEmpresaForm(forms.Form):
+    """
+    Una empresa pide su cuenta en el portal: sus datos y los de quien la va a
+    usar. Queda con el acceso por aprobar hasta que el personal lo revisa.
+    """
+
+    tax_id = forms.CharField(label="RUT de la empresa", max_length=14,
+                             widget=forms.TextInput(attrs={"placeholder": "76.543.210-3"}))
+    legal_name = forms.CharField(label="Razón social", max_length=160)
+    trade_name = forms.CharField(label="Nombre de fantasía", max_length=120,
+                                 help_text="El que ven sus deudores.")
+    commune = forms.CharField(label="Comuna", max_length=80, required=False)
+    region = forms.CharField(label="Región", max_length=80, required=False)
+    website = forms.URLField(label="Sitio web", max_length=200, required=False,
+                             widget=forms.URLInput(attrs={"placeholder": "https://"}))
+    full_name = forms.CharField(label="Su nombre", max_length=120)
+    job_title = forms.CharField(label="Cargo", max_length=80, required=False)
+    email = forms.EmailField(label="Correo", max_length=254, help_text="Con él entra al portal.")
+    phone = forms.CharField(label="Teléfono", max_length=20, required=False)
+    password1 = forms.CharField(label="Clave", widget=forms.PasswordInput)
+    password2 = forms.CharField(label="Repita la clave", widget=forms.PasswordInput)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _aplicar_clases(self.fields)
+
+    def clean_tax_id(self):
+        return rut_limpio(self.cleaned_data["tax_id"])
+
+    def clean_email(self):
+        correo = self.cleaned_data["email"].strip().lower()
+        if get_user_model().objects.filter(username__iexact=correo).exists():
+            raise forms.ValidationError("Ese correo ya tiene una cuenta. Entre con él, o use otro.")
+        return correo
+
+    def clean(self):
+        datos = super().clean()
+        clave, repetida = datos.get("password1"), datos.get("password2")
+        if clave and repetida and clave != repetida:
+            self.add_error("password2", "Las dos claves no son iguales.")
+        elif clave:
+            try:
+                validate_password(clave)
+            except forms.ValidationError as error:
+                self.add_error("password1", error)
+        return datos
+
+
+class EntrarEmpresaForm(AuthenticationForm):
+    """
+    Entrar al portal con correo y clave. Solo entra un contacto con el acceso
+    aprobado: el personal de APOFYX usa el panel, no el portal.
+    """
+
+    error_messages = {
+        **AuthenticationForm.error_messages,
+        "invalid_login": "El correo o la clave no son correctos.",
+        "en_revision": "Tu acceso está en revisión: te avisamos cuando lo aprobemos.",
+        "sin_acceso": "Esa cuenta no tiene acceso al portal de empresas.",
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["username"].label = "Correo"
+        self.fields["username"].widget.attrs.update({"type": "email", "autocomplete": "email"})
+        _aplicar_clases(self.fields)
+
+    def clean_username(self):
+        return (self.cleaned_data.get("username") or "").strip().lower()
+
+    def confirm_login_allowed(self, user):
+        super().confirm_login_allowed(user)
+        contacto = getattr(user, "contacto", None)
+        if contacto is None or contacto.portal_access == CreditorContact.Access.REVOKED:
+            raise forms.ValidationError(self.error_messages["sin_acceso"], code="sin_acceso")
+        if contacto.portal_access != CreditorContact.Access.GRANTED:
+            raise forms.ValidationError(self.error_messages["en_revision"], code="en_revision")
+
+
+class CampanaForm(forms.ModelForm):
+    """Una campaña nueva sobre la cartera de una empresa. La empresa la fija la vista."""
+
+    CANALES = [("whatsapp", "WhatsApp"), ("email", "Correo"), ("sms", "SMS")]
+    channels = forms.MultipleChoiceField(label="Canales", choices=CANALES,
+                                         widget=forms.CheckboxSelectMultiple)
+
+    class Meta:
+        model = Campaign
+        fields = ["name", "starts_on", "ends_on", "status", "channels", "contact_attempts"]
+        widgets = {
+            "name": forms.TextInput(attrs={"placeholder": "Arriendos octubre 2026"}),
+            "starts_on": campo_fecha(),
+            "ends_on": campo_fecha(),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["ends_on"].required = False
+        if not self.is_bound and self.instance.pk is None:
+            self.initial.setdefault("starts_on", timezone.localdate())
+            self.initial.setdefault("status", Campaign.Status.RUNNING)
+            self.initial.setdefault("channels", ["whatsapp", "email"])
+        _aplicar_clases({n: c for n, c in self.fields.items() if n != "channels"})
+
+    def clean(self):
+        datos = super().clean()
+        inicio, fin = datos.get("starts_on"), datos.get("ends_on")
+        if inicio and fin and fin < inicio:
+            self.add_error("ends_on", "La campaña no puede terminar antes de empezar.")
+        return datos
+
+
+class ConexionPlataformaForm(forms.Form):
+    """La dirección y la clave que la plataforma de pagos le emitió a APOFYX."""
+
+    url = forms.URLField(label="Dirección de la plataforma", max_length=300,
+                         widget=forms.URLInput(attrs={"placeholder": "http://localhost:8080"}))
+    api_key = forms.CharField(label="Clave de API", max_length=120,
+                              widget=forms.PasswordInput(attrs={"autocomplete": "off"}),
+                              help_text="La que la plataforma le emitió a APOFYX. No se vuelve a mostrar.")
+    url_avisos = forms.URLField(label="Dónde recibe APOFYX los avisos de pago", max_length=300,
+                                help_text="La dirección de /api/v1/eventos de APOFYX, tal como la ve la plataforma.")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _aplicar_clases(self.fields)
+
+
+class SubirCarteraForm(forms.Form):
+    """La planilla del contrato (Cartera v1, variante CSV) y los datos del lote."""
+
+    archivo = forms.FileField(label="Planilla CSV", help_text="Separada por punto y coma, como la guarda Excel.")
+    fecha_corte = forms.DateField(label="Fecha de corte", widget=campo_fecha())
+    lote_id_externo = forms.CharField(label="Número del lote", max_length=60, required=False,
+                                      help_text="Sin indicar, se arma con la fecha de corte: CSV-2026-09-30-1.")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.is_bound:
+            self.initial.setdefault("fecha_corte", timezone.localdate())
+        _aplicar_clases(self.fields)
+
+    def clean_archivo(self):
+        archivo = self.cleaned_data["archivo"]
+        if archivo.size > 5 * 1024 * 1024:
+            raise forms.ValidationError("La planilla pesa más de 5 MB: divídala en varios lotes.")
+        return archivo
 
 
 def _aplicar_clases(campos):

@@ -18,15 +18,6 @@
                placeholder="Nombre o RUT">
     </div>
     <div>
-        <label class="form-label" for="rubro">Rubro</label>
-        <select class="form-select" id="rubro" name="rubro">
-            <option value="">Todos</option>
-            {% for r in rubros %}
-            <option value="{{ r.slug }}" {% if r.slug == rubro_elegido %}selected{% endif %}>{{ r.name }}</option>
-            {% endfor %}
-        </select>
-    </div>
-    <div>
         <label class="form-label" for="estado">Estado</label>
         <select class="form-select" id="estado" name="estado">
             <option value="">Todos</option>
@@ -47,8 +38,8 @@
     <table class="ap-tabla ap-tabla--listado">
         <thead>
             <tr>
-                <th>Empresa</th><th>RUT</th><th>Rubro</th>
-                <th class="ap-num">Cartera</th><th class="ap-num">Ticket medio</th>
+                <th>Empresa</th><th>RUT</th>
+                <th class="ap-num">Deudas en gestión</th><th class="ap-num">Ticket medio</th>
                 <th>Estado</th>
             </tr>
         </thead>
@@ -57,13 +48,12 @@
             <tr>
                 <td><a href="{% url 'panel:cliente_detalle' empresa.pk %}">{{ empresa.trade_name }}</a></td>
                 <td class="ap-mono">{{ empresa.rut_formateado }}</td>
-                <td>{{ empresa.industry.name }}</td>
                 <td class="ap-num">{{ empresa.cartera.registros|default:"—" }}</td>
                 <td class="ap-num">{% if empresa.cartera.ticket %}{{ empresa.cartera.ticket|pesos }}{% else %}—{% endif %}</td>
                 <td><span class="ap-estado ap-estado--{{ empresa.status }}">{{ empresa.get_status_display }}</span></td>
             </tr>
             {% empty %}
-            <tr><td colspan="6" class="ap-micro">Ninguna empresa coincide con el filtro.</td></tr>
+            <tr><td colspan="5" class="ap-micro">Ninguna empresa coincide con el filtro.</td></tr>
             {% endfor %}
         </tbody>
     </table>
@@ -72,11 +62,11 @@
 {% if pagina.has_other_pages %}
 <nav class="ap-paginacion" aria-label="Paginas">
     {% if pagina.has_previous %}
-    <a href="?{% if busqueda %}q={{ busqueda }}&{% endif %}{% if rubro_elegido %}rubro={{ rubro_elegido }}&{% endif %}{% if estado_elegido %}estado={{ estado_elegido }}&{% endif %}pagina={{ pagina.previous_page_number }}">Anterior</a>
+    <a href="?{% if busqueda %}q={{ busqueda }}&{% endif %}{% if estado_elegido %}estado={{ estado_elegido }}&{% endif %}pagina={{ pagina.previous_page_number }}">Anterior</a>
     {% endif %}
     <span>Pagina {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
     {% if pagina.has_next %}
-    <a href="?{% if busqueda %}q={{ busqueda }}&{% endif %}{% if rubro_elegido %}rubro={{ rubro_elegido }}&{% endif %}{% if estado_elegido %}estado={{ estado_elegido }}&{% endif %}pagina={{ pagina.next_page_number }}">Siguiente</a>
+    <a href="?{% if busqueda %}q={{ busqueda }}&{% endif %}{% if estado_elegido %}estado={{ estado_elegido }}&{% endif %}pagina={{ pagina.next_page_number }}">Siguiente</a>
     {% endif %}
 </nav>
 {% endif %}

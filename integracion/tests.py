@@ -22,7 +22,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from cartera.models import Batch, Debt, DebtCharge, Debtor
-from crm.models import Campaign, CampaignFunnelSnapshot, Creditor, Industry
+from crm.models import Campaign, CampaignFunnelSnapshot, Creditor
 
 from .intake import CarteraInvalida, recibir_cartera
 from .models import ApiKey
@@ -36,12 +36,9 @@ def cartera_de_ejemplo():
 
 
 def crear_acreedor(tax_id=RUT_PATRIMONIO, nombre="Patrimonio Inmuebles"):
-    rubro, _ = Industry.objects.get_or_create(
-        slug="arriendos", defaults={"name": "Corretaje y arriendos"}
-    )
     return Creditor.objects.create(
         legal_name=f"{nombre} SpA", trade_name=nombre, tax_id=tax_id,
-        industry=rubro, status=Creditor.Status.ACTIVE,
+        status=Creditor.Status.ACTIVE,
     )
 
 
@@ -98,8 +95,7 @@ class RecibeLaCarteraDePatrimonio(TestCase):
 
     def test_calcula_la_mora_y_el_tramo_de_cada_deuda(self):
         """
-        Los tramos son los de crm_portfoliohandover, para que la entrega y el
-        panel hablen de lo mismo.
+        Los tramos son los que APOFYX usa para priorizar: 1-30, 31-90 y 91-120.
         """
         respuesta = recibir_cartera(self.acreedor, cartera_de_ejemplo())
         por_id = {r["id_externo"]: r for r in respuesta["resultados"]}
@@ -255,8 +251,8 @@ class RechazaLoQueNoCorresponde(TestCase):
         payload["deudas"][1]["deudor"]["rut"] = "11111111-2"
 
         respuesta = recibir_cartera(self.acreedor, payload)
-        self.assertEqual(respuesta["aceptadas"], 2)
-        self.assertEqual(respuesta["rechazadas"], 2)  # el RUT malo y el retiro sin deuda previa
+        self.assertEqual(respuesta["aceptadas"], 3)   # Felipe, Nandu y Tomas, que esta al dia
+        self.assertEqual(respuesta["rechazadas"], 1)  # el RUT malo
         self.assertTrue(Debt.objects.filter(external_id="CTR-2025-014").exists())
 
     def test_la_cartera_dice_ser_de_otro_acreedor(self):
@@ -282,7 +278,7 @@ class RechazaLoQueNoCorresponde(TestCase):
         respuesta = recibir_cartera(self.acreedor, payload)
 
         self.assertIn("deudas[].color_favorito", respuesta["campos_ignorados"])
-        self.assertEqual(respuesta["aceptadas"], 3)
+        self.assertEqual(respuesta["aceptadas"], 4)
 
 
 class UnDeudorEsElMismoEnTodosLosAcreedores(TestCase):
@@ -328,7 +324,7 @@ class ElEndpointPideCredencial(TestCase):
     def test_con_la_clave_correcta_recibe_la_cartera(self):
         r = self._enviar(cartera_de_ejemplo())
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json()["aceptadas"], 3)
+        self.assertEqual(r.json()["aceptadas"], 4)
 
     def test_sin_clave_no_entra(self):
         r = self.client.post(self.url, data=json.dumps(cartera_de_ejemplo()),
@@ -448,7 +444,12 @@ class LaCarteraQueSaleEsLaQueEntro(TestCase):
         self.cartera = construir_cartera(self.forward, self.campana)
 
     def test_las_deudas_salen_identicas_a_como_entraron(self):
-        self.assertEqual(self.cartera["deudas"], cartera_de_ejemplo()["deudas"])
+        """Las que deben salen tal cual; Tomas, al dia, sale como el retiro de su deuda de agosto."""
+        entraron = [d for d in cartera_de_ejemplo()["deudas"] if d["cargos"]]
+        salen = [d for d in self.cartera["deudas"] if d.get("accion") != "retirar"]
+        self.assertEqual(salen, entraron)
+        self.assertIn({"id_externo": "CTR-2025-022", "accion": "retirar", "motivo_retiro": "pago_directo"},
+                      self.cartera["deudas"])
 
     def test_el_acreedor_sigue_siendo_patrimonio(self):
         self.assertEqual(self.cartera["lote"]["acreedor"]["rut"], RUT_PATRIMONIO)
@@ -547,7 +548,7 @@ class LaBandejaDeSalida(TestCase):
         with self.assertLogs("integracion.reenvio", "WARNING"),                 self.captureOnCommitCallbacks(execute=True):
             respuesta = recibir_cartera(self.acreedor, cartera_de_ejemplo())
 
-        self.assertEqual(respuesta["aceptadas"], 3)
+        self.assertEqual(respuesta["aceptadas"], 4)
         forward = Forward.objects.get()
         self.assertEqual(forward.status, Forward.Status.PENDING)
         self.assertEqual(forward.attempts, 1)
@@ -1181,12 +1182,12 @@ from django.contrib.auth.models import User  # noqa: E402
 @override_settings(DATABRIDGE=CON_EVENTOS)
 class ElPanelMuestraLaCarteraRecibida(TestCase):
     """
-    El panel leia solo los cortes mensuales (crm_portfoliohandover), y un
+    El panel leia solo los cortes mensuales que se cargaban a mano, y un
     cliente que entrega por la API aparecia sin cartera.
     """
 
     def setUp(self):
-        User.objects.create_user("operador", password="clave-larga-123")
+        User.objects.create_user("operador", password="clave-larga-123", is_staff=True)
         self.client.login(username="operador", password="clave-larga-123")
         self.acreedor = crear_acreedor()
         recibir_cartera(self.acreedor, cartera_de_ejemplo())
@@ -1211,3 +1212,270 @@ class ElPanelMuestraLaCarteraRecibida(TestCase):
         #  El ticket, solo sobre las deudas en pesos: Felipe y Valentina.
         self.assertEqual(empresa.cartera["ticket"], Decimal("725000"))
         self.assertEqual(self.client.get(reverse("panel:dashboard")).context["cartera_total"], 3)
+
+
+# ==========================================================================
+#  Todos los clientes con contrato: el que esta al dia viene sin cargos
+# ==========================================================================
+
+@override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+class UnClienteAlDiaNoSeCobra(TestCase):
+    """
+    En la cartera de ejemplo, Tomas se puso al dia en la oficina y viene sin
+    cargos.
+
+    El acreedor manda a todos sus clientes con contrato y APOFYX detecta al
+    moroso. De quien esta al dia no se guarda nada; si tenia su deuda en
+    gestion, le pago al acreedor por fuera y la deuda se cierra.
+    """
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+
+    def test_uno_nuevo_al_dia_se_acepta_sin_guardar_nada(self):
+        respuesta = recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        por_id = {r["id_externo"]: r for r in respuesta["resultados"]}
+        self.assertEqual(por_id["CTR-2025-022"]["resultado"], "al_dia")
+        self.assertEqual(respuesta["rechazadas"], 0)
+        self.assertFalse(Debt.objects.filter(external_id="CTR-2025-022").exists())
+        self.assertFalse(Debtor.objects.filter(tax_id="15227640-0").exists())
+
+    def test_al_dia_con_su_deuda_en_gestion_la_cierra_y_se_la_pasa_a_databridge(self):
+        recibir_cartera(self.acreedor, lote_de_agosto())
+        campana = campana_de(self.acreedor)
+        respuesta = recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+        por_id = {r["id_externo"]: r for r in respuesta["resultados"]}
+        self.assertEqual(por_id["CTR-2025-022"]["resultado"], "retirada")
+        tomas = Debt.objects.get(external_id="CTR-2025-022")
+        self.assertEqual(tomas.status, Debt.Status.WITHDRAWN)
+        self.assertEqual(tomas.withdrawn_reason, "pago_directo")
+
+        forward = Forward.objects.get(batch__external_id="PAT-2026-09-18-01")
+        retiros = [d for d in construir_cartera(forward, campana)["deudas"] if d.get("accion") == "retirar"]
+        self.assertEqual(retiros, [{"id_externo": "CTR-2025-022", "accion": "retirar",
+                                    "motivo_retiro": "pago_directo"}])
+
+    def test_al_dia_con_una_deuda_ya_pagada_no_cambia_nada(self):
+        recibir_cartera(self.acreedor, lote_de_agosto())
+        Debt.objects.filter(external_id="CTR-2025-022").update(status=Debt.Status.PAID)
+        respuesta = recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        por_id = {r["id_externo"]: r for r in respuesta["resultados"]}
+        self.assertEqual(por_id["CTR-2025-022"]["resultado"], "al_dia")
+        self.assertEqual(Debt.objects.get(external_id="CTR-2025-022").status, Debt.Status.PAID)
+
+    def test_una_deuda_sin_la_lista_de_cargos_sigue_siendo_un_error(self):
+        cartera = cartera_de_ejemplo()
+        del cartera["deudas"][0]["cargos"]
+        respuesta = recibir_cartera(self.acreedor, cartera)
+        self.assertEqual(respuesta["resultados"][0]["errores"][0]["codigo"], "sin_cargos")
+
+    @override_settings(DATABRIDGE={**DATABRIDGE_PRUEBA, "MORA_MAXIMA_DIAS": 30})
+    def test_el_limite_de_mora_sale_de_la_configuracion(self):
+        respuesta = recibir_cartera(self.acreedor, cartera_de_ejemplo())
+        por_id = {r["id_externo"]: r for r in respuesta["resultados"]}
+        self.assertEqual(por_id["CTR-2025-014"]["errores"][0]["codigo"], "mora_fuera_de_mandato")
+
+
+# ==========================================================================
+#  La empresa conecta su sistema: cuenta y suscripciones por API
+# ==========================================================================
+
+class LaEmpresaConectaSuSistema(TestCase):
+    """El mismo contrato que atiende DataBridge un tramo mas arriba."""
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        self.clave, _ = ApiKey.emitir(self.acreedor, "Sistema de arriendos")
+
+    def _auth(self, clave=None):
+        return {"authorization": f"Bearer {clave or self.clave}"}
+
+    def test_la_cuenta_dice_de_quien_es_la_clave_y_con_quien_quedo_conectada(self):
+        r = self.client.get(reverse("integracion:cuenta"), headers=self._auth())
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {
+            "rut": RUT_PATRIMONIO, "razon_social": "Patrimonio Inmuebles SpA",
+            "nombre": "Patrimonio Inmuebles", "tipo": "acreedor",
+            "receptor": {"rut": "77305118-6", "nombre": "APOFYX"},
+        })
+
+    def test_la_cuenta_sin_clave_es_401(self):
+        r = self.client.get(reverse("integracion:cuenta"), headers=self._auth("apx_inventada"))
+        self.assertEqual(r.status_code, 401)
+
+    def test_suscribirse_entrega_el_secreto_y_repetirlo_devuelve_el_mismo(self):
+        cuerpo = json.dumps({"url": "http://patrimonio.prueba/api/eventos"})
+        uno = self.client.post(reverse("integracion:suscripciones"), cuerpo, content_type="application/json",
+                               headers=self._auth()).json()
+        dos = self.client.post(reverse("integracion:suscripciones"), cuerpo, content_type="application/json",
+                               headers=self._auth()).json()
+        self.assertTrue(uno["secreto"].startswith("whsec_"))
+        self.assertEqual(uno["secreto"], dos["secreto"])
+        self.assertEqual(uno["eventos"], "todos")
+        self.assertEqual(self.acreedor.subscriptions.get().url, "http://patrimonio.prueba/api/eventos")
+
+    def test_suscribirse_con_una_url_que_no_es_web_es_400(self):
+        r = self.client.post(reverse("integracion:suscripciones"), json.dumps({"url": "ftp://x"}),
+                             content_type="application/json", headers=self._auth())
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"]["codigo"], "url_invalida")
+
+    def test_suscribirse_a_un_evento_que_no_existe_es_400(self):
+        r = self.client.post(reverse("integracion:suscripciones"),
+                             json.dumps({"url": "http://x.cl/e", "eventos": ["pago.inventado"]}),
+                             content_type="application/json", headers=self._auth())
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"]["codigo"], "evento_desconocido")
+
+    def test_una_clave_revocada_deja_de_servir(self):
+        ApiKey.objects.get().revocar()
+        self.assertEqual(self.client.get(reverse("integracion:cuenta"), headers=self._auth()).status_code, 401)
+
+
+# ==========================================================================
+#  La planilla: el mismo contrato para la empresa sin sistema
+# ==========================================================================
+
+from . import planilla  # noqa: E402
+
+PLANTILLA = Path(ajustes.BASE_DIR) / "static" / "plantillas" / "cartera-v1.plantilla.csv"
+
+
+class LaPlanillaEsElMismoContrato(TestCase):
+
+    def leer(self, texto):
+        return planilla.leer(texto.encode("utf-8"), "CSV-1", "2026-09-18", RUT_PATRIMONIO)
+
+    def test_la_plantilla_es_la_misma_cartera_que_el_ejemplo_json(self):
+        cartera = planilla.leer(PLANTILLA.read_bytes(), "PAT-2026-09-18-01", "2026-09-18", RUT_PATRIMONIO)
+        self.assertEqual(cartera["deudas"], cartera_de_ejemplo()["deudas"])
+
+    def test_la_plantilla_es_la_del_contrato_publicado(self):
+        publicada = (Path(ajustes.BASE_DIR).parent / "TB_web" / "docs" / "integracion"
+                     / "ejemplos" / "cartera-v1.plantilla.csv")
+        if not publicada.exists():
+            self.skipTest("El repositorio de DataBridge no esta al lado")
+        self.assertEqual(PLANTILLA.read_bytes(), publicada.read_bytes())
+
+    def test_una_fila_sin_cargo_es_un_cliente_al_dia(self):
+        encabezado = ";".join(planilla.COLUMNAS)
+        cartera = self.leer(f"{encabezado}\nCTR-1;registrar;;16482337-7;persona;Felipe;f@correo.cl;;CLP;Arriendo;;;;;\n")
+        self.assertEqual(cartera["deudas"][0]["cargos"], [])
+
+    def test_en_pesos_un_punto_es_un_separador_de_miles(self):
+        encabezado = ";".join(planilla.COLUMNAS)
+        with self.assertRaises(CarteraInvalida) as caso:
+            self.leer(f"{encabezado}\nCTR-1;registrar;;16482337-7;persona;Felipe;;;CLP;Arriendo;;Julio;;520.000;2026-07-05\n")
+        self.assertIn("sin puntos ni comas", caso.exception.mensaje)
+
+    def test_sin_las_columnas_del_contrato_se_rechaza_entera(self):
+        with self.assertRaises(CarteraInvalida) as caso:
+            self.leer("email;nombre;monto\nana@correo.cl;Ana;1000\n")
+        self.assertIn("Faltan columnas", caso.exception.mensaje)
+
+    def test_una_deuda_con_filas_distintas_dice_cual_fila(self):
+        encabezado = ";".join(planilla.COLUMNAS)
+        with self.assertRaises(CarteraInvalida) as caso:
+            self.leer(f"{encabezado}\n"
+                      "CTR-1;registrar;;16482337-7;persona;Felipe;;;CLP;Arriendo;;Julio;;520000;2026-07-05\n"
+                      "CTR-1;registrar;;18905214-6;persona;Felipe;;;CLP;Arriendo;;Agosto;;520000;2026-08-05\n")
+        self.assertTrue(caso.exception.mensaje.startswith("Fila 3: la deuda CTR-1 tiene otro deudor_rut"))
+
+
+# ==========================================================================
+#  La conexion con la plataforma de pagos, desde el panel
+# ==========================================================================
+
+from .models import PlatformConnection  # noqa: E402
+from .plataforma import ConexionFallida, conectar, plataforma  # noqa: E402
+from .reenvio import asegurar_mandato_y_campana  # noqa: E402
+
+
+class PlataformaFalsa:
+    """Hace de DataBridge al conectar: responde la cuenta y la suscripcion."""
+
+    def __init__(self, rut="77305118-6", caida=False):
+        self.rut, self.caida, self.llamadas = rut, caida, []
+
+    def consultar(self, ruta):
+        if self.caida:
+            raise ErrorDataBridge("Sin respuesta de DataBridge")
+        self.llamadas.append(("GET", ruta, None))
+        return {"rut": self.rut, "nombre": "APOFYX", "tipo": "agencia",
+                "receptor": {"rut": None, "nombre": "DataBridge"}}
+
+    def enviar(self, ruta, cuerpo):
+        self.llamadas.append(("POST", ruta, cuerpo))
+        return {"url": cuerpo["url"], "eventos": "todos", "secreto": "whsec_de_databridge"}
+
+
+@override_settings(DATABRIDGE={**DATABRIDGE_PRUEBA, "URL": "", "CLAVE": ""})
+class APOFYXSeConectaDesdeElPanel(TestCase):
+
+    def test_conectar_comprueba_la_clave_se_suscribe_y_guarda_todo(self):
+        falsa = PlataformaFalsa()
+        fila = conectar("http://databridge.prueba/", "tbk_clave", "http://apofyx.prueba/api/v1/eventos", falsa)
+        self.assertEqual(falsa.llamadas[0][:2], ("GET", "/api/v1/cuenta"))
+        self.assertEqual(falsa.llamadas[1], ("POST", "/api/v1/suscripciones",
+                                             {"url": "http://apofyx.prueba/api/v1/eventos"}))
+        self.assertEqual(fila.platform_name, "DataBridge")
+        self.assertEqual(fila.url, "http://databridge.prueba")
+
+    def test_desde_ese_momento_vale_la_conexion_y_no_la_configuracion(self):
+        self.assertEqual(plataforma()["URL"], "")
+        conectar("http://databridge.prueba", "tbk_clave", "http://apofyx.prueba/api/v1/eventos", PlataformaFalsa())
+        conf = plataforma()
+        self.assertEqual((conf["URL"], conf["CLAVE"], conf["SECRETO_EVENTOS"]),
+                         ("http://databridge.prueba", "tbk_clave", "whsec_de_databridge"))
+
+    def test_una_clave_de_otra_empresa_no_se_guarda(self):
+        with self.assertRaises(ConexionFallida) as caso:
+            conectar("http://databridge.prueba", "tbk_ajena", "http://apofyx.prueba/e", PlataformaFalsa(rut="76418902-7"))
+        self.assertIn("no de APOFYX", str(caso.exception))
+        self.assertFalse(PlatformConnection.objects.exists())
+
+    def test_si_la_plataforma_no_responde_no_se_guarda_nada(self):
+        with self.assertRaises(ConexionFallida):
+            conectar("http://databridge.prueba", "tbk_clave", "http://apofyx.prueba/e", PlataformaFalsa(caida=True))
+        self.assertFalse(PlatformConnection.objects.exists())
+
+    def test_la_pagina_del_panel_conecta(self):
+        from unittest import mock
+        from django.contrib.auth.models import User
+
+        User.objects.create_user("operador", password="clave-larga-123", is_staff=True)
+        self.client.login(username="operador", password="clave-larga-123")
+        with mock.patch("crm.panel_views.conectar") as conectar_falso:
+            conectar_falso.return_value = PlatformConnection(platform_name="DataBridge")
+            r = self.client.post(reverse("panel:plataforma"), {
+                "accion": "conectar", "url": "http://databridge.prueba", "api_key": "tbk_clave",
+                "url_avisos": "http://apofyx.prueba/api/v1/eventos",
+            })
+        self.assertRedirects(r, reverse("panel:plataforma"))
+        conectar_falso.assert_called_once_with("http://databridge.prueba", "tbk_clave",
+                                               "http://apofyx.prueba/api/v1/eventos")
+
+
+@override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+class ElMandatoPresentaALaEmpresa(TestCase):
+    """DataBridge registra a una empresa nueva con los nombres que le manda APOFYX."""
+
+    def test_el_mandato_lleva_la_razon_social_y_el_nombre_de_fantasia(self):
+        acreedor = crear_acreedor()
+        campana = campana_de(acreedor)
+        recibir_cartera(acreedor, cartera_de_ejemplo())
+        cliente = ClienteFalso()
+        asegurar_mandato_y_campana(cliente, Batch.objects.get(), campana)
+        ruta, mandato = cliente.llamadas[0]
+        self.assertEqual(ruta, "/api/v1/mandatos")
+        self.assertEqual(mandato["razon_social"], "Patrimonio Inmuebles SpA")
+        self.assertEqual(mandato["nombre_fantasia"], "Patrimonio Inmuebles")
+
+    def test_la_cartera_que_sale_nombra_a_la_empresa(self):
+        acreedor = crear_acreedor()
+        campana = campana_de(acreedor)
+        recibir_cartera(acreedor, cartera_de_ejemplo())
+        forward = Forward.objects.get()
+        self.assertEqual(construir_cartera(forward, campana)["lote"]["acreedor"]["nombre_fantasia"],
+                         "Patrimonio Inmuebles")

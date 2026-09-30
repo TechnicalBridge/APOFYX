@@ -8,9 +8,9 @@ from .reenvio import despachar
 @admin.register(ApiKey)
 class ApiKeyAdmin(admin.ModelAdmin):
     """
-    Las claves se emiten con `manage.py emitir_clave`, no desde aca: la clave
-    se muestra una sola vez y esta pantalla no podria mostrarla, porque en la
-    base solo esta su huella.
+    Las claves las emite cada empresa en su portal (Conectar mi sistema), no
+    desde aca: la clave se muestra una sola vez y esta pantalla no podria
+    mostrarla, porque en la base solo esta su huella.
     """
 
     list_display = ("prefix", "creditor", "name", "created_at", "last_used_at", "revoked_at")
@@ -49,9 +49,10 @@ class ForwardAdmin(admin.ModelAdmin):
 @admin.register(Subscription)
 class SubscriptionAdmin(admin.ModelAdmin):
     """
-    Se crean con `manage.py suscribir_cliente`, que muestra el secreto una vez
-    para configurarlo en el cliente. Aca no se muestra: quien tenga acceso al
-    admin no necesita poder firmar eventos a nombre de APOFYX.
+    Las crea el sistema de cada empresa con POST /api/v1/suscripciones, o la
+    empresa en su portal; el secreto se muestra una vez, para configurarlo en
+    el cliente. Aca no se muestra: quien tenga acceso al admin no necesita
+    poder firmar eventos a nombre de APOFYX.
     """
 
     list_display = ("creditor", "url", "active", "created_at")

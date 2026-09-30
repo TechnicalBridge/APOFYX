@@ -35,10 +35,14 @@ APOFYX gestiona la cobranza de empresas que tienen muchos clientes morosos de mo
 —gimnasios, institutos, clínicas, ISP, gastos comunes—, donde una llamada telefónica cuesta más
 de lo que recupera.
 
-Recibe la cartera morosa de sus clientes por API o por archivo, la ordena, calcula la mora y el
-tramo de cada deuda, la reparte en campañas, y se la pasa a la plataforma de pagos para que el
-deudor pueda pagar solo. Cuando alguien paga, el aviso vuelve y APOFYX pone la cartera al día y
-se lo reporta al acreedor.
+Cada empresa cliente se registra sola en el **portal de empresas**, y el personal de APOFYX
+aprueba su acceso. Desde ahí la empresa entrega su cartera: por API, con una clave que emite ella
+misma, o subiendo la planilla del contrato. Cada mes entrega a todos sus clientes con contrato,
+deban o no, y APOFYX detecta a los morosos.
+
+Después APOFYX ordena la cartera, calcula la mora y el tramo de cada deuda, la reparte en
+campañas y se la pasa a la plataforma de pagos, para que el deudor pueda pagar solo. Cuando
+alguien paga, el aviso vuelve, APOFYX pone la cartera al día y se lo reporta al acreedor.
 
 **APOFYX cumple el papel operacional.** No procesa pagos: ordena carteras, gestiona campañas
 y reporta. El procesamiento de pagos y el asistente del deudor viven en **DataBridge**.
@@ -50,8 +54,8 @@ de la tecnología se explica en [`docs/APOFYX.md`](docs/APOFYX.md), §7.3 y §13
 
 | Quién | Qué hace acá |
 | --- | --- |
-| **La empresa acreedora** (Patrimonio Inmuebles, un gimnasio, un instituto) | Entrega su cartera morosa y recibe el reporte de lo recuperado |
-| **El personal de APOFYX** | Usa el panel: clientes, carteras, campañas y leads |
+| **La empresa acreedora** (Patrimonio Inmuebles, un gimnasio, un instituto) | Entra al portal de empresas (`/empresas/`): entrega su cartera, conecta su sistema, y ve qué pasó con cada deuda |
+| **El personal de APOFYX** | Usa el panel (`/panel/`): aprueba empresas, crea campañas, conecta la plataforma de pagos y atiende los leads |
 | **La persona que visita el sitio** | Cotiza el servicio o conversa con el asistente |
 | **El deudor** | **No entra acá.** Paga en DataBridge |
 
@@ -106,7 +110,8 @@ primera petición. `--wait` devuelve el control recién cuando está sano.
 | | |
 | --- | --- |
 | Sitio | http://127.0.0.1:8000/ |
-| Panel | http://127.0.0.1:8000/panel/ · usuario `admin`, clave `apofyx2026` |
+| Panel del personal | http://127.0.0.1:8000/panel/ · usuario `admin`, clave `apofyx2026` |
+| Portal de empresas | http://127.0.0.1:8000/empresas/ · cada empresa crea su cuenta en *Registrar mi empresa* |
 | Admin de Django | http://127.0.0.1:8000/admin/ |
 | Base de datos | `127.0.0.1:3307` · usuario `apofyx_app` |
 
@@ -146,6 +151,11 @@ alguien.**
 >
 > **Si tu base se aleja del archivo**, `bash sql/rehacer.sh` la vuelve a crear desde
 > `sql/AphofyxDB.sql` y te devuelve los datos. Deja un respaldo antes de tocar nada.
+>
+> **Una base anterior a la integración natural** se pone al día sola con `migrate`: la migración
+> `crm.0004` borra los rubros (`crm_industry`) y las entregas manuales
+> (`crm_portfoliohandover`), y suma las cuentas del portal. Es un cambio sin vuelta atrás:
+> respalda antes con `sql/rehacer.sh`.
 
 ---
 
@@ -172,7 +182,7 @@ En este repositorio, de DevOps se tomaron tres cosas:
 
 | Práctica | Qué resuelve |
 | --- | --- |
-| **Integración continua** | GitHub Actions levanta MySQL 8.4, **carga el esquema desde el DDL, lo migra con Django y corre las 295 pruebas** en cada push. Si una migración no funciona sobre una base recién creada, la CI se cae |
+| **Integración continua** | GitHub Actions levanta MySQL 8.4, **carga el esquema desde el DDL, lo migra con Django y corre las 353 pruebas** en cada push. Si una migración no funciona sobre una base recién creada, la CI se cae |
 | **El esquema es la fuente** | `sql/AphofyxDB.sql` se escribe a mano y los modelos son su espejo. Hay pruebas que comparan los dos y fallan si se separan |
 | **Infraestructura como código** | Docker Compose levanta la base ya poblada; nadie tiene que "instalar MySQL y correr este script" |
 
@@ -195,7 +205,7 @@ flowchart LR
         C["cartera<br/>deudores, deudas y cargos"]
         R["crm<br/>clientes, campañas y leads"]
         S["assistant<br/>el asistente del sitio"]
-        B[("MySQL 8.4<br/>21 tablas · 4 vistas")]
+        B[("MySQL 8.4<br/>20 tablas · 4 vistas")]
         I --- C
         C --- R
         R --- S
@@ -214,33 +224,80 @@ flowchart LR
 
 | App | Qué guarda |
 | --- | --- |
-| **crm** | Clientes B2B (`crm_creditor`), sus contactos, las carteras que entregan, las campañas y los leads del sitio |
+| **crm** | Clientes B2B (`crm_creditor`), sus contactos con sus cuentas del portal, las campañas y los leads del sitio. También el panel del personal y el portal de empresas |
 | **cartera** | Deudores, deudas y cargos: lo que el acreedor entrega |
-| **integracion** | El borde. Claves de API, lotes recibidos, la bandeja de salida hacia DataBridge y los eventos que vuelven |
+| **integracion** | El borde. Claves de API, lotes recibidos, la planilla CSV, la conexión con la plataforma de pagos, la bandeja de salida hacia DataBridge y los eventos que vuelven |
 | **assistant** | El catálogo del asistente del sitio —intenciones, patrones, respuestas— y las conversaciones |
 
 El nombre de cada app define el prefijo de sus tablas: `crm` → `crm_creditor`, `cartera` →
 `cartera_debtor`.
 
+### Una empresa se suma
+
+Nada de esto pasa por la consola ni por el código. Así entra cualquier empresa:
+
+1. **Se registra** en `/empresas/registro/` con el RUT de la empresa (se valida el módulo 11), su
+   razón social, su nombre y los datos de la persona que la va a usar.
+   - Con un RUT nuevo, se crea la empresa en *incorporación*.
+   - Con uno que ya es cliente, la persona se suma a esa empresa.
+2. **El personal aprueba el acceso.** El resumen del panel avisa las cuentas por aprobar, y la
+   ficha de la empresa también permite quitar el acceso. Mientras tanto, el login responde *Tu
+   acceso está en revisión*.
+3. **La empresa entra al portal** con su correo y su clave. Tiene cuatro pantallas:
+
+| Pantalla | Para qué |
+| --- | --- |
+| **Mi cartera** | Sus entregas, qué pasó con cada deuda y en qué quedó el reenvío a la plataforma de pagos |
+| **Subir cartera** | La planilla CSV del contrato, para una empresa sin sistema. La respuesta sale deuda por deuda |
+| **Conectar mi sistema** | Emitir y revocar sus claves de API, y registrar dónde recibe los avisos de pago |
+| **Mis datos** | Los datos de la empresa y sus contactos |
+
+El personal entra por `/panel/`, y el panel exige `is_staff`: una cuenta de empresa no lo ve. Las
+sesiones de los dos se guardan en la base (`django_session`) y duran 8 horas.
+
 ### Recibir la cartera de un cliente
 
-El acreedor entrega su cartera morosa por `POST /api/v1/carteras`, en el formato **Cartera v1**
-del [contrato de integración](https://github.com/TechnicalBridge/TB_web/tree/main/docs/integracion).
-Primero se le emite su credencial:
-
-```powershell
-python manage.py emitir_clave 76418902-7 "Servidor de Patrimonio"
-```
+El acreedor entrega su cartera por `POST /api/v1/carteras`, en el formato **Cartera v1** del
+[contrato de integración](https://github.com/TechnicalBridge/TB_web/tree/main/docs/integracion),
+con una clave que emitió en **Conectar mi sistema**.
 
 La clave se muestra **una sola vez**: en la base queda solo su huella SHA-256. Si se pierde, se
-emite otra con `--revocar-anteriores`. Sin claves emitidas nadie puede enviar nada, y APOFYX
-funciona igual con la carga a mano del panel.
+revoca y se emite otra. Con la misma clave, su sistema usa las otras dos llamadas del contrato:
+
+| Llamada | Para qué |
+| --- | --- |
+| `GET /api/v1/cuenta` | Comprobar la clave: responde de qué empresa es y quién la atiende (APOFYX) |
+| `POST /api/v1/suscripciones` | Registrar dónde recibe los avisos de pago. Devuelve el secreto con que se firman |
+
+**Cada mes la empresa entrega a todos sus clientes con contrato, deban o no.** El que está al día
+viaja con `cargos: []`:
+
+| La deuda | Qué hace APOFYX |
+| --- | --- |
+| Es nueva | Responde `al_dia` y no guarda nada del cliente |
+| Está en gestión | La cierra como retirada, con motivo `pago_directo`: pagó directo al acreedor |
+| Ya estaba pagada o retirada | Nada |
+
+La planilla de **Subir cartera** (`integracion/planilla.py`) es el mismo contrato en CSV: se
+convierte a Cartera v1 y entra por el mismo camino que la API.
 
 ### Pasársela a DataBridge
 
-Con `DATABRIDGE_URL` y `DATABRIDGE_CLAVE`, cada entrega aceptada se reenvía a DataBridge en el
-mismo formato, con el mandato de APOFYX y la campaña agregados. Los montos, los cargos y los ids
-de deuda no se tocan.
+El personal conecta APOFYX a la plataforma de pagos en **Panel → Plataforma**: pega la dirección y
+la clave que DataBridge le emitió a APOFYX, y toca **Conectar**. APOFYX hace tres cosas:
+
+1. comprueba la clave con `GET /api/v1/cuenta`;
+2. se suscribe a los avisos de pago con `POST /api/v1/suscripciones`;
+3. guarda la conexión y el secreto en la base (`integracion_platformconnection`).
+
+Vale al tiro, sin reiniciar nada. Las variables `DATABRIDGE_URL`, `DATABRIDGE_CLAVE` y
+`DATABRIDGE_SECRETO_EVENTOS` solo valen si nunca se conectó desde el panel. Son las que usan las
+pruebas.
+
+Cada entrega aceptada se reenvía a DataBridge en el mismo formato, con el mandato de APOFYX y la
+campaña agregados. Los montos, los cargos y los ids de deuda no se tocan. El mandato lleva la
+razón social y el nombre de la empresa, así que **DataBridge registra solo a un acreedor que no
+conocía**. Los clientes al día nuevos no se reenvían; los cierres, sí, como retiros.
 
 El reenvío pasa por una **bandeja de salida** (`integracion_forward`), así que el acreedor recibe
 su respuesta aunque DataBridge esté caído. Lo que no se pudo entregar se reintenta con esperas
@@ -254,12 +311,14 @@ En desarrollo el primer intento sale apenas se recibe. En producción conviene
 `DATABRIDGE_REENVIO_INMEDIATO=0` y correr `despachar_reenvios` cada minuto con el programador de
 tareas: así la recepción queda completamente separada de DataBridge.
 
-Una entrega necesita campaña. Si el acreedor tiene exactamente una en curso, se usa esa; con cero
-o con varias queda **esperando campaña** hasta que alguien la asigne en el panel.
+Una entrega necesita campaña. Si el acreedor tiene exactamente una en curso, se usa esa. Con cero
+o con varias queda **esperando campaña**, y el panel lo avisa en el resumen y en la ficha de la
+empresa. Ahí mismo se crea la campaña (**Nueva campaña**) o se asigna una, y la entrega sale sola.
 
 ### El mes siguiente
 
-El acreedor vuelve a mandar cada mes a todos sus morosos. Dos casos cambian de estado solos:
+El acreedor vuelve a mandar cada mes a todos sus clientes con contrato. Además del cliente que se
+puso al día, dos casos cambian de estado solos:
 
 - **Una deuda pagada vuelve a gestión** si el deudor se atrasa otra vez en el mismo contrato,
   siempre que todos los cargos sean posteriores a los que se pagaron. Si trae cargos viejos, se
@@ -278,15 +337,11 @@ Cuando un deudor paga o acepta un plan en DataBridge, DataBridge le avisa a APOF
 al día la deuda y se lo reporta al cliente con el mismo formato. Patrimonio marca pagados los
 cargos del contrato sin saber que detrás hay DataBridge.
 
-```powershell
-# 1. APOFYX le dice a DataBridge dónde avisarle. Devuelve el secreto con que
-#    DataBridge firma: va al .env como DATABRIDGE_SECRETO_EVENTOS.
-python manage.py suscribirse_a_databridge https://apofyx.cl/api/v1/eventos
+Las dos suscripciones se hacen sin consola:
 
-# 2. APOFYX registra dónde avisarle a cada cliente. Devuelve el secreto que el
-#    cliente configura de su lado (en Patrimonio, EVENTOS_SECRET).
-python manage.py suscribir_cliente 76418902-7 http://localhost:3001/api/eventos
-```
+- **APOFYX con DataBridge:** al conectar en **Panel → Plataforma**.
+- **La empresa con APOFYX:** su sistema llama a `POST /api/v1/suscripciones`, como hace Patrimonio
+  al conectarse desde su pestaña *Cobranza*, o la registra a mano en **Conectar mi sistema**.
 
 | Evento | Qué le pasa a la deuda en APOFYX |
 | --- | --- |
@@ -311,7 +366,7 @@ de DataBridge, vista desde acá.
 | Felipe Rojas | Aceptó 6 cuotas y lleva 3 pagadas | En convenio de pago |
 | Valentina Soto | Debe un mes, y DataBridge cobra desde dos: no la tomó | En gestión |
 | Comercial Ñandú | Debe tres meses en UF | En gestión |
-| Tomás Fuentes | Pagó en la oficina y Patrimonio lo retiró | Retirada |
+| Tomás Fuentes | Pagó en la oficina: la entrega de septiembre lo trae al día, sin cargos | Retirada (pago directo) |
 | Rodrigo Pérez | Debe cuatro meses | En gestión |
 | Carolina Muñoz | Pagó todo de una vez | Pagada |
 | Panadería La Espiga | Aceptó 3 cuotas en UF y pagó la primera | En convenio de pago |
@@ -338,7 +393,7 @@ deudores que también le deben a otro cliente se quedan. Para arrancar el conten
 
 ## 7. Modelo de datos
 
-**21 tablas y 4 vistas**, en `sql/AphofyxDB.sql`. El esquema se escribe a mano, comentado, y los
+**20 tablas y 4 vistas**, en `sql/AphofyxDB.sql`. El esquema se escribe a mano, comentado, y los
 modelos de Django son su espejo: hay pruebas que comparan los dos y fallan si se separan.
 
 Las categorías —estados, tipos, orígenes— se guardan como **`ENUM`**: MySQL las representa con un
@@ -355,11 +410,13 @@ empresa acreedora**, la que tiene deudores y contrata a APOFYX. Se llamaba `crm_
 nombre no distinguía nada, porque acá hay tres empresas en juego: APOFYX, la acreedora y
 DataBridge.
 
+No hay tipos de empresa: APOFYX atiende a cualquiera que tenga cobros, así que el rubro se eliminó.
+La cartera de una empresa es solo la que entregó, deuda por deuda.
+
 ```mermaid
 erDiagram
-    crm_industry     ||--o{ crm_creditor          : "clasifica"
     crm_creditor     ||--o{ crm_creditorcontact   : "tiene"
-    crm_creditor     ||--o{ crm_portfoliohandover : "entrega"
+    auth_user        |o--o| crm_creditorcontact   : "entra al portal como"
     crm_creditor     ||--o{ crm_campaign          : "contrata"
     crm_campaign     ||--o{ crm_campaignfunnelsnapshot : "mide"
     crm_creditor     ||--o{ cartera_batch         : "envía"
@@ -372,6 +429,9 @@ erDiagram
     cartera_debt     ||--o{ integracion_inboundevent : "recibe"
     crm_creditor     ||--o{ integracion_subscription : "se suscribe"
 ```
+
+`integracion_platformconnection` queda fuera del diagrama porque no se relaciona con las demás: es
+una sola fila, con la conexión a la plataforma de pagos.
 
 El archivo `sql/AphofyxDB.sql` trae el esquema, los datos de referencia, cinco empresas de
 demostración con sus campañas, y el catálogo del asistente (19 intenciones, 117 patrones, 19
@@ -389,10 +449,11 @@ script, hace falta `docker compose down -v` para que se vuelva a cargar.
 | `apofyx/web` | [`Dockerfile`](Dockerfile), dos etapas: la primera instala las dependencias con el compilador de C que necesita `mysqlclient`, la segunda se queda solo con el entorno instalado |
 | `mysql:8.4` | Oficial, con `sql/AphofyxDB.sql` montado como script de inicialización |
 
-El contenedor **no corre como root** (usuario `apofyx`, uid 10001) y no usa `runserver`: sirve
-con **Gunicorn** y tres trabajadores. Antes de la primera petición, `docker-entrada.sh` espera a
-la base, corre `migrate --fake-initial`, junta los estáticos, crea el superusuario si le dieron
-las variables y carga la cartera de la demo si `DEMO_DATOS` lo pide.
+El contenedor **no corre como root** (usuario `apofyx`, uid 10001) y no usa `runserver`. Sirve
+con **Gunicorn**, con tres trabajadores de cuatro hilos cada uno, para que una pestaña abierta no
+deje esperando a la API. Antes de la primera petición, `docker-entrada.sh` espera a la base, corre
+`migrate --fake-initial`, junta los estáticos, crea el superusuario si le dieron las variables y
+carga la cartera de la demo si `DEMO_DATOS` lo pide.
 
 ### Variables de entorno
 
@@ -406,9 +467,13 @@ documentadas en [`.env.example`](.env.example).
 | `DJANGO_DEBUG_DOCKER` | `0` | Variable propia para el contenedor. El `.env` de desarrollo dice `DJANGO_DEBUG=1` y compose lo lee solo, así que sin esta separación el contenedor mostraría la traza completa en cada error |
 | `DJANGO_SUPERUSER_USERNAME`, `DJANGO_SUPERUSER_PASSWORD` | `admin` / `apofyx2026` | El usuario del panel. Se crea al arrancar si no existe. Es la misma clave que trae `.env.example` |
 | `WEB_PORT` | `8000` | Dónde queda el sitio |
-| `DATABRIDGE_URL`, `DATABRIDGE_CLAVE`, `DATABRIDGE_SECRETO_EVENTOS` | vacías | La cadena con DataBridge. Sin ellas APOFYX trabaja solo |
+| `APOFYX_RUT`, `APOFYX_MORA_MAXIMA` | `77305118-6` / `120` | La identidad de APOFYX en el mandato, y hasta cuántos días de mora cobra |
+| `DATABRIDGE_REENVIO_INMEDIATO` | `1` | Reenviar apenas llega la cartera. Con `0`, solo con `despachar_reenvios` |
 | `DEMO_DATOS` | `true` | Carga al arrancar la [cartera de la demo](#la-cartera-de-la-demo). Solo entra si Patrimonio no tiene cartera |
 | `GEMINI_API_KEY` | vacía | El respaldo del asistente. Sin ella, responde con reglas |
+
+La conexión con DataBridge no va en variables: se hace en **Panel → Plataforma** y queda en la
+base.
 
 **Los valores por omisión son de desarrollo y están escritos en un archivo público.**
 
@@ -420,7 +485,7 @@ documentadas en [`.env.example`](.env.example).
 python manage.py test
 ```
 
-**295 pruebas**, verificadas nuevamente el 29-09-2026 contra MySQL. El **90% de cobertura**
+**353 pruebas**, verificadas nuevamente el 29-09-2026 contra MySQL. El **90% de cobertura**
 corresponde a una medición anterior; no se recalculó en esta revisión. Django crea una base aparte
 (`test_apofyx`) y la borra al terminar; el permiso para hacerlo lo otorga la Parte 5 de
 `sql/AphofyxDB.sql`.
@@ -428,7 +493,7 @@ corresponde a una medición anterior; no se recalculó en esta revisión. Django
 | Tipo | Qué cubre |
 | --- | --- |
 | **Unitarias** | El motor del asistente, el cálculo de mora y tramo, el módulo 11 del RUT, la firma HMAC de los eventos, los formularios |
-| **De integración** | Las vistas del sitio y del panel, la ingesta de cartera completa (aceptación parcial, idempotencia, retiros), el reenvío a DataBridge con su bandeja de salida, la reapertura de una deuda pagada y la devolución por mora, la cartera recibida en el panel, la cartera de la demo |
+| **De integración** | Las vistas del sitio y del panel; el portal de empresas (registro, aprobación, login, claves, planilla CSV); la conexión con la plataforma desde el panel; la ingesta de cartera completa (aceptación parcial, idempotencia, retiros, clientes al día); el reenvío a DataBridge con su bandeja de salida y su mandato; la reapertura de una deuda pagada y la devolución por mora; la cartera de la demo |
 | **De esquema** | Comparan `sql/AphofyxDB.sql` con los modelos: si un `ENUM` del DDL y las opciones del modelo dejan de decir lo mismo, la prueba falla. Es la única forma de detectar esa separación, porque Django arma la base de pruebas desde las migraciones y no desde el DDL |
 
 Ninguna prueba llama a la API de Gemini: el respaldo con modelo se simula. Lo que se verifica no
@@ -492,11 +557,11 @@ dé siempre el mismo número aunque el modelo se entrene otro día.
 ```
 APOFYX/
 ├── config/            proyecto Django: settings y urls raíz
-├── crm/               clientes B2B, carteras, campañas y leads
+├── crm/               clientes B2B, campañas y leads; el panel y el portal de empresas
 ├── assistant/         catálogo del asistente del sitio y conversaciones
 ├── cartera/           deudores, deudas y cargos que entregan los acreedores
 ├── integracion/       el borde: cartera que entra y sale, eventos que vuelven
-├── templates/         base, sitio público y panel
+├── templates/         base, sitio público, panel y portal de empresas
 ├── static/            Bootstrap y tipografías en local, tema, animaciones y marca
 ├── sql/AphofyxDB.sql  esquema físico completo: DDL + datos
 ├── sql/rehacer.sh     rehace la base desde el DDL conservando los datos
@@ -524,7 +589,7 @@ procesar dinero y acreditar mejoras de cobranza con datos reales.
 
 | Comprobación | Resultado |
 | --- | --- |
-| Suite Django | **295 pruebas aprobadas**, sin fallos ni errores |
+| Suite Django | **353 pruebas aprobadas** (2 omitidas), sin fallos ni errores |
 | Motor de prueba | MySQL 8.4, base con nombre temporal único, eliminada al finalizar |
 | Entorno utilizado | Python 3.14.3 y Django 6.1.1 del entorno local |
 | Configuración Docker | `docker compose --profile app config --quiet` correcto |
@@ -565,7 +630,7 @@ de estado. La evaluación no lo ejecutó sobre las conexiones del usuario.
 
 | Situación | Qué revisar |
 | --- | --- |
-| Cartera aceptada pero ausente en DataBridge | Variables `DATABRIDGE_*`, campaña asignada y estado del reenvío |
+| Cartera aceptada pero ausente en DataBridge | La conexión en **Panel → Plataforma**, la campaña asignada y el estado del reenvío |
 | Entrega esperando campaña | Que exista una campaña aplicable o se asigne desde el panel |
 | Eventos rechazados | Secreto de la suscripción, reloj de los sistemas y cuerpo firmado |
 | Pendientes después de una caída | Ejecutor de `despachar_reenvios`, próximo intento y error almacenado |

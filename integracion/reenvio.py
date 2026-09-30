@@ -17,8 +17,9 @@ TRES REGLAS
    de salida en la misma transaccion que recibe, y se entrega despues. Si
    DataBridge esta caido, el cliente de APOFYX igual recibe su respuesta.
 
-3. SIN CONFIGURACION NO PASA NADA. Sin URL o sin clave el reenvio esta
-   apagado, y APOFYX trabaja solo, como antes.
+3. SIN CONEXION NO PASA NADA. Mientras APOFYX no se conecte a la plataforma
+   (desde el panel, ver plataforma.py) el reenvio esta apagado, y APOFYX
+   trabaja solo, como antes.
 
 No usa `requests` a proposito: esta instalado solo como dependencia de otra
 libreria, y apoyarse en eso haria que el reenvio se rompiera el dia que esa
@@ -39,12 +40,13 @@ from cartera.models import Debt, Debtor
 from crm.models import Campaign
 
 from .models import Forward
+from .plataforma import plataforma
 
 log = logging.getLogger(__name__)
 
 
 def configurado():
-    conf = settings.DATABRIDGE
+    conf = plataforma()
     return bool(conf["URL"] and conf["CLAVE"])
 
 
@@ -173,6 +175,7 @@ def construir_cartera(forward, campana):
             "acreedor": {
                 "rut": acreedor.tax_id,
                 "razon_social": acreedor.legal_name,
+                "nombre_fantasia": acreedor.trade_name,
             },
             "mandato": {
                 "agencia_rut": settings.DATABRIDGE["RUT_AGENCIA"],
@@ -192,19 +195,25 @@ class ErrorDataBridge(Exception):
 
 
 class ClienteDataBridge:
-    """Tres llamadas del contrato: mandato, campana y cartera."""
+    """Las llamadas del contrato: cuenta, suscripcion, mandato, campana y cartera."""
 
     def __init__(self, url=None, clave=None, timeout=None):
-        conf = settings.DATABRIDGE
+        conf = plataforma() if url is None or clave is None else settings.DATABRIDGE
         self.url = (url or conf["URL"]).rstrip("/")
         self.clave = clave or conf["CLAVE"]
         self.timeout = timeout or conf["TIMEOUT_S"]
 
     def enviar(self, ruta, cuerpo):
+        return self._pedir(ruta, "POST", json.dumps(cuerpo, ensure_ascii=False).encode("utf-8"))
+
+    def consultar(self, ruta):
+        return self._pedir(ruta, "GET", None)
+
+    def _pedir(self, ruta, metodo, datos):
         peticion = urllib.request.Request(
             self.url + ruta,
-            data=json.dumps(cuerpo, ensure_ascii=False).encode("utf-8"),
-            method="POST",
+            data=datos,
+            method=metodo,
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.clave}",
@@ -247,6 +256,10 @@ def asegurar_mandato_y_campana(cliente, batch, campana):
     """
     cliente.enviar("/api/v1/mandatos", {
         "acreedor_rut": batch.creditor.tax_id,
+        #  Si la plataforma no conoce a la empresa, la registra con estos: el que
+        #  ve el deudor es el nombre de fantasia.
+        "razon_social": batch.creditor.legal_name,
+        "nombre_fantasia": batch.creditor.trade_name,
         "vigente_desde": (batch.creditor.client_since or batch.cut_off).isoformat(),
         "mora_maxima_dias": settings.DATABRIDGE["MORA_MAXIMA_DIAS"],
     })

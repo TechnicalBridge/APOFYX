@@ -1,27 +1,35 @@
 """
 Panel interno de APOFYX.
 
-Lo unico que administra son los clientes B2B: sus datos, su cartera entregada y
-el rendimiento de sus campanas. Pagos no hay: el dinero lo mueve DataBridge, y a
-APOFYX le llega el aviso (docs seccion 2.2).
+Lo que administra son los clientes B2B: sus datos, los accesos de sus cuentas,
+su cartera entregada y sus campanas; y la conexion de APOFYX con la plataforma
+de pagos. Pagos no hay: el dinero lo mueve DataBridge, y a APOFYX le llega el
+aviso (docs seccion 2.2).
 
-Todas las vistas exigen sesion iniciada.
+Todas las vistas exigen una sesion del PERSONAL (is_staff). Las empresas
+tienen su propio portal (portal_views.py): una cuenta de empresa no ve el
+panel, aunque haya iniciado sesion.
 """
 
 from collections import Counter
 
 from django.contrib import messages
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import user_passes_test
+from django.contrib.auth.forms import AuthenticationForm
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db.models import Count, Max, Q, Sum
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from assistant.models import Conversation, Message
 from cartera.models import Batch, Debt, DebtCharge
-from .forms import CreditorContactForm, CreditorForm
+from integracion.models import Forward
+from integracion.plataforma import ConexionFallida, conectar, conexion, desconectar
+from .forms import CampanaForm, ConexionPlataformaForm, CreditorContactForm, CreditorForm
 from .models import (
-    Campaign, CampaignFunnelSnapshot, Creditor, CreditorContact, Industry, Lead,
+    Campaign, CampaignFunnelSnapshot, Creditor, CreditorContact, Lead,
 )
 
 # Cuantas filas por pagina en los listados. Con la cartera de demostracion no
@@ -47,6 +55,30 @@ ESTADO_DE_UNA = {
 }
 
 
+def es_personal(user):
+    return user.is_active and user.is_staff
+
+
+#  Una cuenta de empresa que llega aca vuelve al login del equipo, que no la deja
+#  entrar: el panel es del personal.
+personal_requerido = user_passes_test(es_personal, login_url="panel:login")
+
+
+class EntrarPersonalForm(AuthenticationForm):
+    """El login del panel: solo el personal de APOFYX."""
+
+    error_messages = {
+        **AuthenticationForm.error_messages,
+        "invalid_login": "Usuario o contraseña incorrectos.",
+        "no_es_personal": "Esa cuenta no es del equipo de APOFYX. Las empresas entran por su portal.",
+    }
+
+    def confirm_login_allowed(self, user):
+        super().confirm_login_allowed(user)
+        if not user.is_staff:
+            raise ValidationError(self.error_messages["no_es_personal"], code="no_es_personal")
+
+
 def estado_de(deuda):
     """El estado de una deuda en el panel. Una devuelta por mora se distingue de una que retiro el acreedor."""
     if deuda.status == Debt.Status.WITHDRAWN:
@@ -56,64 +88,49 @@ def estado_de(deuda):
 
 def adjuntar_cartera(empresas):
     """
-    Deja en cada empresa un atributo .cartera con su ultimo periodo.
+    Deja en cada empresa un atributo .cartera: cuantas deudas tiene en gestion,
+    el ticket medio en pesos y el corte de su ultima entrega.
 
-    Cada empresa tiene una fila por tramo de mora, asi que hay que agregarlas
-    antes de mostrarlas; y el ticket medio se pondera por cantidad de
-    registros, no es el promedio simple de los tres tramos.
-
-    Se calcula en Python sobre lo que ya trajo prefetch_related, en vez de una
-    consulta por empresa. Se adjunta al objeto —y no se devuelve un diccionario
-    aparte— porque las plantillas de Django no saben indexar por clave.
+    Sale de la cartera real, deuda por deuda. Dos consultas para toda la
+    pagina, no dos por empresa. Se adjunta al objeto —y no se devuelve un
+    diccionario aparte— porque las plantillas de Django no saben indexar por
+    clave.
     """
+    empresas = list(empresas)
+    #  Por id y no por el queryset: el de una pagina lleva LIMIT, y MySQL no
+    #  acepta un IN sobre una subconsulta con LIMIT.
+    ids = [e.pk for e in empresas]
+    vivas = {fila["creditor_id"]: fila for fila in (
+        Debt.objects.filter(creditor_id__in=ids, status__in=EN_GESTION)
+        .values("creditor_id").annotate(registros=Count("id"), corte=Max("last_batch__cut_off")))}
+    #  El ticket, sobre las deudas en pesos: un promedio que mezclara pesos con
+    #  UF no significaria nada.
+    pesos = {fila["debt__creditor_id"]: fila["total"] / fila["deudas"] for fila in (
+        DebtCharge.objects.filter(debt__creditor_id__in=ids, debt__status__in=EN_GESTION,
+                                  debt__currency=Debt.Currency.CLP)
+        .values("debt__creditor_id").annotate(total=Sum("amount"), deudas=Count("debt", distinct=True)))}
     for empresa in empresas:
-        tramos = list(empresa.handovers.all())
-        if not tramos:
-            empresa.cartera = {"registros": 0, "ticket": 0, "periodo": None, "tramos": []}
-            continue
-        ultimo = max(t.period_month for t in tramos)
-        del_periodo = [t for t in tramos if t.period_month == ultimo]
-        total = sum(t.debtor_count for t in del_periodo)
+        fila = vivas.get(empresa.pk)
         empresa.cartera = {
-            "registros": total,
-            "ticket": (
-                sum(t.average_debt_clp * t.debtor_count for t in del_periodo) / total
-                if total else 0
-            ),
-            "periodo": ultimo,
-            "tramos": sorted(del_periodo, key=lambda t: t.overdue_bracket),
+            "registros": fila["registros"] if fila else 0,
+            "ticket": pesos.get(empresa.pk, 0),
+            "periodo": fila["corte"] if fila else None,
         }
-
-    #  Un cliente que entrega por la integracion no tiene cortes mensuales: su
-    #  cartera es la que llego, deuda por deuda. Dos consultas para toda la
-    #  pagina, no dos por empresa.
-    por_api = [e for e in empresas if e.cartera["periodo"] is None]
-    if por_api:
-        vivas = {fila["creditor_id"]: fila for fila in (
-            Debt.objects.filter(creditor__in=por_api, status__in=EN_GESTION)
-            .values("creditor_id").annotate(registros=Count("id"), corte=Max("last_batch__cut_off")))}
-        #  El ticket, sobre las deudas en pesos: un promedio que mezclara pesos
-        #  con UF no significaria nada.
-        pesos = {fila["debt__creditor_id"]: fila["total"] / fila["deudas"] for fila in (
-            DebtCharge.objects.filter(debt__creditor__in=por_api, debt__status__in=EN_GESTION,
-                                      debt__currency=Debt.Currency.CLP)
-            .values("debt__creditor_id").annotate(total=Sum("amount"), deudas=Count("debt", distinct=True)))}
-        for empresa in por_api:
-            fila = vivas.get(empresa.pk)
-            if fila:
-                empresa.cartera = {"registros": fila["registros"], "ticket": pesos.get(empresa.pk, 0),
-                                   "periodo": fila["corte"], "tramos": []}
     return empresas
 
 
 def cartera_recibida(empresa):
     """
-    La cartera que el cliente entrego por la integracion: sus entregas, que
-    paso con cada deuda y cuanto queda por cobrar. None si nunca entrego asi.
+    La cartera que el cliente entrego: sus entregas, que paso con cada deuda y
+    cuanto queda por cobrar. None si nunca entrego nada.
     """
     entregas = list(Batch.objects.filter(creditor=empresa).select_related("forward").order_by("-cut_off", "-id")[:6])
     if not entregas:
         return None
+    for entrega in entregas:
+        #  Una entrega que no se reenvia no tiene Forward, y el acceso inverso
+        #  revienta: se deja explicito para la plantilla.
+        entrega.reenvio = getattr(entrega, "forward", None)
     deudas = (Debt.objects.filter(creditor=empresa).select_related("debtor", "last_batch")
               .prefetch_related("charges").order_by("status", "external_id"))
     por_estado = Counter()
@@ -144,10 +161,18 @@ def cartera_recibida(empresa):
     }
 
 
-@login_required
+def accesos_pendientes(empresa=None):
+    """Las cuentas de empresa que esperan que el personal las apruebe."""
+    pendientes = CreditorContact.objects.filter(portal_access=CreditorContact.Access.PENDING)
+    if empresa is not None:
+        pendientes = pendientes.filter(creditor=empresa)
+    return pendientes.select_related("creditor").order_by("created_at")
+
+
+@personal_requerido
 def dashboard(request):
-    """Resumen: cuantos clientes hay, cuanta cartera y como rinden las campanas."""
-    empresas = adjuntar_cartera(list(Creditor.objects.prefetch_related("handovers")))
+    """Resumen: cuantos clientes hay, cuanta cartera, quien espera acceso y como rinden las campanas."""
+    empresas = adjuntar_cartera(list(Creditor.objects.all()))
     cartera_total = sum(e.cartera["registros"] for e in empresas)
 
     embudo = CampaignFunnelSnapshot.objects.aggregate(
@@ -169,17 +194,17 @@ def dashboard(request):
             status=Campaign.Status.RUNNING
         ).count(),
         "leads_nuevos": Lead.objects.filter(status=Lead.Status.NEW).count(),
+        "accesos_pendientes": accesos_pendientes(),
+        "esperando_campana": (Forward.objects.filter(status=Forward.Status.WAITING_CAMPAIGN)
+                              .select_related("batch__creditor")),
+        "plataforma": conexion(),
         "embudo": embudo,
         "tasas": {
             "entrega": porcentaje(embudo["entregados"], embudo["enviados"]),
             "apertura": porcentaje(embudo["abiertos"], embudo["entregados"]),
             "clic": porcentaje(embudo["clics"], embudo["abiertos"]),
         },
-        "rubros": (
-            Industry.objects.annotate(total=Count("creditors"))
-            .filter(total__gt=0).order_by("-total")
-        ),
-        "ultimos_leads": Lead.objects.select_related("industry")[:6],
+        "ultimos_leads": Lead.objects.all()[:6],
         "cobertura_asistente": (
             Message.objects.filter(speaker=Message.Speaker.ASSISTANT)
             .values("answer_engine").annotate(total=Count("id")).order_by("-total")
@@ -189,13 +214,12 @@ def dashboard(request):
     return render(request, "panel/dashboard.html", contexto)
 
 
-@login_required
+@personal_requerido
 def clientes(request):
-    """Listado de empresas cliente, con busqueda y filtros."""
-    empresas = Creditor.objects.select_related("industry").prefetch_related("handovers")
+    """Listado de empresas cliente, con busqueda y filtro por estado."""
+    empresas = Creditor.objects.all()
 
     busqueda = (request.GET.get("q") or "").strip()
-    rubro = (request.GET.get("rubro") or "").strip()
     estado = (request.GET.get("estado") or "").strip()
 
     if busqueda:
@@ -204,8 +228,6 @@ def clientes(request):
             | Q(legal_name__icontains=busqueda)
             | Q(tax_id__icontains=busqueda)
         )
-    if rubro:
-        empresas = empresas.filter(industry__slug=rubro)
     if estado:
         empresas = empresas.filter(status=estado)
 
@@ -219,23 +241,19 @@ def clientes(request):
         "pagina": pagina,
         "empresas": pagina.object_list,
         "total": pagina.paginator.count,
-        "rubros": Industry.objects.filter(is_active=True),
         "estados": Creditor.Status.choices,
         "busqueda": busqueda,
-        "rubro_elegido": rubro,
         "estado_elegido": estado,
-        "hay_filtros": bool(busqueda or rubro or estado),
+        "hay_filtros": bool(busqueda or estado),
     }
     return render(request, "panel/clientes.html", contexto)
 
 
-@login_required
+@personal_requerido
 def cliente_detalle(request, pk):
-    """Ficha de una empresa: datos, contactos, cartera y campanas."""
+    """Ficha de una empresa: datos, contactos y accesos, cartera y campanas."""
     empresa = get_object_or_404(
-        Creditor.objects.select_related("industry").prefetch_related(
-            "contacts", "handovers", "campaigns__snapshots"
-        ),
+        Creditor.objects.prefetch_related("contacts", "campaigns__snapshots"),
         pk=pk,
     )
 
@@ -254,16 +272,20 @@ def cliente_detalle(request, pk):
         "campanas": campanas,
         "leads": empresa.origin_leads.all()[:5],
         "recibida": cartera_recibida(empresa),
+        "esperando_campana": Forward.objects.filter(batch__creditor=empresa,
+                                                    status=Forward.Status.WAITING_CAMPAIGN).select_related("batch"),
+        "en_curso": [c for c in empresa.campaigns.all() if c.status == Campaign.Status.RUNNING],
         "form_contacto": CreditorContactForm(),
         "estados": Creditor.Status.choices,
+        "estados_campana": Campaign.Status.choices,
     }
     return render(request, "panel/cliente_detalle.html", contexto)
 
 
-@login_required
+@personal_requerido
 def leads(request):
     """Contactos entrantes, del formulario y del asistente."""
-    lista = Lead.objects.select_related("industry", "converted_creditor")
+    lista = Lead.objects.select_related("converted_creditor")
 
     estado = (request.GET.get("estado") or "").strip()
     origen = (request.GET.get("origen") or "").strip()
@@ -295,7 +317,7 @@ def leads(request):
 #  delante. El borrado real, si alguna vez hace falta, vive en el admin.
 # ==========================================================================
 
-@login_required
+@personal_requerido
 def cliente_nuevo(request):
     """Alta de una empresa cliente."""
     form = CreditorForm(request.POST or None)
@@ -309,7 +331,7 @@ def cliente_nuevo(request):
     })
 
 
-@login_required
+@personal_requerido
 def cliente_editar(request, pk):
     """Edicion de los datos de una empresa."""
     empresa = get_object_or_404(Creditor, pk=pk)
@@ -324,7 +346,7 @@ def cliente_editar(request, pk):
     })
 
 
-@login_required
+@personal_requerido
 @require_POST
 def cliente_estado(request, pk):
     """Cambia el estado de una empresa. Es la baja, sin perder el historico."""
@@ -342,7 +364,7 @@ def cliente_estado(request, pk):
     return redirect("panel:cliente_detalle", pk=empresa.pk)
 
 
-@login_required
+@personal_requerido
 def contacto_nuevo(request, pk):
     """Agrega un contacto a la empresa."""
     empresa = get_object_or_404(Creditor, pk=pk)
@@ -360,7 +382,7 @@ def contacto_nuevo(request, pk):
     })
 
 
-@login_required
+@personal_requerido
 def contacto_editar(request, pk, contacto_pk):
     """Edicion de un contacto."""
     empresa = get_object_or_404(Creditor, pk=pk)
@@ -378,14 +400,15 @@ def contacto_editar(request, pk, contacto_pk):
     })
 
 
-@login_required
+@personal_requerido
 @require_POST
 def contacto_eliminar(request, pk, contacto_pk):
     """
     Elimina un contacto.
 
     Aca si se borra de verdad: un contacto no arrastra historico, y mantener
-    a una persona que ya no trabaja ahi es peor que no tenerla.
+    a una persona que ya no trabaja ahi es peor que no tenerla. Si tenia cuenta
+    en el portal, la cuenta queda sin empresa y ya no puede entrar.
     """
     empresa = get_object_or_404(Creditor, pk=pk)
     contacto = get_object_or_404(CreditorContact, pk=contacto_pk, creditor=empresa)
@@ -393,3 +416,142 @@ def contacto_eliminar(request, pk, contacto_pk):
     contacto.delete()
     messages.success(request, f"{nombre} fue eliminado.")
     return redirect("panel:cliente_detalle", pk=empresa.pk)
+
+
+# ==========================================================================
+#  Accesos al portal de empresas
+# ==========================================================================
+
+@personal_requerido
+@require_POST
+def acceso_aprobar(request, pk, contacto_pk):
+    """
+    Aprueba la cuenta de un contacto. Si la empresa estaba en incorporacion,
+    queda activa: el personal ya la reviso.
+    """
+    empresa = get_object_or_404(Creditor, pk=pk)
+    contacto = get_object_or_404(CreditorContact, pk=contacto_pk, creditor=empresa, user__isnull=False)
+    contacto.portal_access = CreditorContact.Access.GRANTED
+    contacto.save(update_fields=["portal_access", "updated_at"])
+    if empresa.status == Creditor.Status.ONBOARDING:
+        empresa.status = Creditor.Status.ACTIVE
+        empresa.save(update_fields=["status", "updated_at"])
+    messages.success(request, f"{contacto.full_name} ya puede entrar al portal de {empresa.trade_name}.")
+    return redirect(request.POST.get("volver") or reverse("panel:cliente_detalle", args=[empresa.pk]))
+
+
+@personal_requerido
+@require_POST
+def acceso_revocar(request, pk, contacto_pk):
+    """Le quita el acceso al portal. La cuenta queda, sin poder entrar."""
+    empresa = get_object_or_404(Creditor, pk=pk)
+    contacto = get_object_or_404(CreditorContact, pk=contacto_pk, creditor=empresa, user__isnull=False)
+    contacto.portal_access = CreditorContact.Access.REVOKED
+    contacto.save(update_fields=["portal_access", "updated_at"])
+    messages.success(request, f"{contacto.full_name} ya no puede entrar al portal.")
+    return redirect("panel:cliente_detalle", pk=empresa.pk)
+
+
+# ==========================================================================
+#  Campanas
+# ==========================================================================
+
+@personal_requerido
+def campana_nueva(request, pk):
+    """
+    Una campana sobre la cartera de la empresa. Una entrega que esperaba
+    campana y la empresa ahora tiene exactamente una en curso, sale sola.
+    """
+    empresa = get_object_or_404(Creditor, pk=pk)
+    form = CampanaForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        campana = form.save(commit=False)
+        campana.creditor = empresa
+        if Campaign.objects.filter(creditor=empresa, name=campana.name).exists():
+            form.add_error("name", "Esta empresa ya tiene una campaña con ese nombre.")
+        else:
+            campana.save()
+            messages.success(request, f"La campaña {campana.name} quedó creada.")
+            _despachar_esperando(request, empresa)
+            return redirect("panel:cliente_detalle", pk=empresa.pk)
+
+    return render(request, "panel/campana_form.html", {
+        "activo": "clientes", "form": form, "empresa": empresa,
+    })
+
+
+@personal_requerido
+@require_POST
+def campana_estado(request, pk, campana_pk):
+    """En curso, pausada o finalizada."""
+    empresa = get_object_or_404(Creditor, pk=pk)
+    campana = get_object_or_404(Campaign, pk=campana_pk, creditor=empresa)
+    nuevo = request.POST.get("estado")
+    if nuevo not in dict(Campaign.Status.choices):
+        messages.error(request, "Ese estado no existe.")
+    else:
+        campana.status = nuevo
+        campana.save(update_fields=["status", "updated_at"])
+        messages.success(request, f"{campana.name} quedó {campana.get_status_display().lower()}.")
+        if nuevo == Campaign.Status.RUNNING:
+            _despachar_esperando(request, empresa)
+    return redirect("panel:cliente_detalle", pk=empresa.pk)
+
+
+@personal_requerido
+@require_POST
+def entregas_asignar(request, pk):
+    """Asigna una campana a las entregas de la empresa que la esperaban, y las reenvia."""
+    empresa = get_object_or_404(Creditor, pk=pk)
+    campana = get_object_or_404(Campaign, pk=request.POST.get("campana"), creditor=empresa)
+    esperando = Forward.objects.filter(batch__creditor=empresa, status=Forward.Status.WAITING_CAMPAIGN)
+    Batch.objects.filter(forward__in=esperando).update(campaign=campana)
+    _despachar_esperando(request, empresa)
+    return redirect("panel:cliente_detalle", pk=empresa.pk)
+
+
+def _despachar_esperando(request, empresa):
+    """Reintenta ya las entregas de la empresa que esperaban campana."""
+    from integracion.reenvio import despachar
+
+    for forward in Forward.objects.filter(batch__creditor=empresa, status=Forward.Status.WAITING_CAMPAIGN):
+        resultado = despachar(forward.pk)
+        if resultado.status == Forward.Status.SENT:
+            messages.success(request, f"La entrega {forward.batch.external_id} se reenvió a la plataforma de pagos.")
+
+
+# ==========================================================================
+#  La conexion con la plataforma de pagos
+# ==========================================================================
+
+@personal_requerido
+def plataforma(request):
+    """
+    Conecta APOFYX con la plataforma de pagos: la direccion y la clave que la
+    plataforma le emitio. Al conectar se comprueba la clave y se suscribe a los
+    avisos; desde ese momento vale, sin reiniciar nada.
+    """
+    actual = conexion()
+    if request.method == "POST" and request.POST.get("accion") == "desconectar":
+        desconectar()
+        messages.success(request, "APOFYX quedó desconectada de la plataforma de pagos.")
+        return redirect("panel:plataforma")
+
+    inicial = {"url_avisos": request.build_absolute_uri("/api/v1/eventos")}
+    if actual is not None:
+        inicial["url"] = actual.url
+    form = ConexionPlataformaForm(request.POST or None, initial=inicial)
+    if request.method == "POST" and form.is_valid():
+        try:
+            fila = conectar(form.cleaned_data["url"], form.cleaned_data["api_key"],
+                            form.cleaned_data["url_avisos"])
+        except ConexionFallida as error:
+            form.add_error(None, str(error))
+        else:
+            messages.success(request, f"APOFYX quedó conectada con {fila.platform_name}.")
+            return redirect("panel:plataforma")
+
+    return render(request, "panel/plataforma.html", {
+        "activo": "plataforma", "form": form, "actual": actual,
+        "esperando": Forward.objects.exclude(status=Forward.Status.SENT).select_related("batch__creditor")[:20],
+    })

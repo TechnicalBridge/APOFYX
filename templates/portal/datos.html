@@ -1,0 +1,56 @@
+{% extends "portal/base_portal.html" %}
+
+{% block titulo_portal %}Mis datos{% endblock %}
+{% block encabezado %}Mis datos{% endblock %}
+
+{% block portal %}
+
+<div class="row g-5">
+    <div class="col-lg-5">
+        <h2 class="ap-h3 mb-3">La empresa</h2>
+        <table class="ap-tabla ap-tabla--ficha mb-3">
+            <tbody>
+                <tr><th>Razón social</th><td>{{ empresa.legal_name }}</td></tr>
+                <tr><th>Nombre de fantasía</th><td>{{ empresa.trade_name }}</td></tr>
+                <tr><th>RUT</th><td class="ap-mono">{{ empresa.rut_formateado }}</td></tr>
+                <tr><th>Comuna</th><td>{{ empresa.commune|default:"—" }}{% if empresa.region %}, {{ empresa.region }}{% endif %}</td></tr>
+                <tr><th>Sitio</th><td>{{ empresa.website|default:"—" }}</td></tr>
+                <tr><th>Estado</th><td>{{ empresa.get_status_display }}</td></tr>
+            </tbody>
+        </table>
+        <p class="ap-micro">Para cambiar estos datos, escríbanos a contacto@apofyx.cl.</p>
+    </div>
+
+    <div class="col-lg-7">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2 class="ap-h3 mb-0">Contactos</h2>
+            <a class="btn btn-ap-linea" href="{% url 'portal:contacto_nuevo' %}">Agregar contacto</a>
+        </div>
+        <div class="ap-lista-compacta">
+            {% for contacto in contactos %}
+            <div class="d-flex justify-content-between gap-3">
+                <div>
+                    <strong>{{ contacto.full_name }}</strong>
+                    {% if contacto.is_primary %}<span class="ap-marca-principal">principal</span>{% endif %}
+                    <span class="ap-micro d-block">{{ contacto.job_title|default:"—" }} · {{ contacto.email }}{% if contacto.phone %} · {{ contacto.phone }}{% endif %}</span>
+                    {% if contacto.portal_access %}<span class="ap-micro d-block">Portal: {{ contacto.get_portal_access_display|lower }}</span>{% endif %}
+                </div>
+                <div class="d-flex flex-column align-items-end gap-1 flex-shrink-0">
+                    <a class="ap-micro" href="{% url 'portal:contacto_editar' contacto.pk %}">Editar</a>
+                    {% if contacto.user_id != request.user.pk %}
+                    <form method="post" action="{% url 'portal:contacto_eliminar' contacto.pk %}">
+                        {% csrf_token %}
+                        <button class="btn btn-link ap-micro p-0" type="submit">Eliminar</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <p class="ap-micro mt-3">
+            Para que otra persona de su empresa tenga su propia cuenta, pídale que se registre con el RUT de la empresa.
+        </p>
+    </div>
+</div>
+
+{% endblock %}

@@ -6,8 +6,9 @@ Esta app esta aislada a proposito de `crm` y de `cartera`. Es la unica que sabe
 como se habla con afuera, asi que el dia que el contrato cambie de version, lo
 que se toca es esto y no el resto del sistema.
 
-Apagada por defecto: sin claves emitidas, nadie puede enviar nada y APOFYX
-sigue funcionando con la carga a mano del panel.
+Apagada por defecto: sin claves emitidas, nadie puede enviar nada. Las claves
+las emite cada empresa en su portal, y la conexion con DataBridge se hace desde
+el panel del personal: nada de esto pasa por la consola ni por el .env.
 """
 
 import hashlib
@@ -92,6 +93,12 @@ class ApiKey(models.Model):
         cls.objects.filter(pk=registro.pk).update(last_used_at=timezone.now())
         return registro
 
+    def revocar(self):
+        """Deja la clave sin efecto desde ya. No se borra: queda el rastro de que existio."""
+        if self.revoked_at is None:
+            self.revoked_at = timezone.now()
+            self.save(update_fields=["revoked_at"])
+
 
 # 1 min, 5, 30, 2 h, 6 h y 24 h. Despues queda para reenvio a mano. Son las
 # mismas del contrato (seccion 8.1) y las mismas que usa DataBridge.
@@ -130,7 +137,7 @@ class Forward(models.Model):
 
     class Status(models.TextChoices):
         PENDING = "pending", "Por enviar"
-        WAITING_CAMPAIGN = "waiting", "Esperando campana"
+        WAITING_CAMPAIGN = "waiting", "Esperando campaña"
         SENT = "sent", "Entregada"
         FAILED = "failed", "Fallida"
 
@@ -320,3 +327,44 @@ class OutboundEvent(models.Model):
 
     def fallo(self, motivo):
         _reintentar(self, motivo)
+
+
+# ==========================================================================
+#  La conexion con la plataforma de pagos
+# ==========================================================================
+
+class PlatformConnection(models.Model):
+    """
+    Con que plataforma de pagos esta conectada APOFYX, y con que clave.
+
+    Una sola fila (la base lo obliga con el id fijo en 1). La llena el panel del
+    personal: se pega la direccion y la clave que la plataforma le emitio a
+    APOFYX, y al conectar se comprueba la clave y se suscribe a los avisos. El
+    secreto con que la plataforma firma esos avisos se guarda aca, y desde ese
+    momento vale, sin reiniciar nada.
+
+    La clave y el secreto se guardan en claro: la clave hay que PRESENTARLA y
+    con el secreto hay que FIRMAR, y una huella no sirve para ninguna de las
+    dos. Por lo mismo, el panel no los vuelve a mostrar.
+    """
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    url = models.CharField("direccion", max_length=300)
+    api_key = models.CharField("clave de API", max_length=120)
+    events_secret = models.CharField("secreto de los avisos", max_length=120, blank=True, null=True)
+    platform_rut = models.CharField("RUT de la plataforma", max_length=12, blank=True, null=True)
+    platform_name = models.CharField("nombre de la plataforma", max_length=120, blank=True, null=True)
+    connected_at = models.DateTimeField("conectada", blank=True, null=True)
+    last_error = models.CharField("ultimo error", max_length=300, blank=True, null=True)
+    updated_at = models.DateTimeField("actualizada", auto_now=True)
+
+    class Meta:
+        db_table = "integracion_platformconnection"
+        verbose_name = "conexion con la plataforma de pagos"
+        verbose_name_plural = "conexion con la plataforma de pagos"
+        constraints = [
+            models.CheckConstraint(condition=models.Q(id=1), name="ck_platformconnection_una"),
+        ]
+
+    def __str__(self):
+        return self.platform_name or self.url

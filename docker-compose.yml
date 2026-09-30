@@ -89,10 +89,8 @@ services:
       # quien no tenga .env entran con la misma.
       DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD:-apofyx2026}
       DJANGO_SUPERUSER_EMAIL:    ${DJANGO_SUPERUSER_EMAIL:-admin@apofyx.cl}
-      # La cadena con DataBridge, apagada mientras no haya credenciales.
-      DATABRIDGE_URL:             ${DATABRIDGE_URL:-}
-      DATABRIDGE_CLAVE:           ${DATABRIDGE_CLAVE:-}
-      DATABRIDGE_SECRETO_EVENTOS: ${DATABRIDGE_SECRETO_EVENTOS:-}
+      # La cadena con DataBridge no se configura aqui: se conecta desde el
+      # panel (Plataforma), y la conexion queda en la base.
       # La cartera de Patrimonio de la demo (manage.py cargar_demo). Solo
       # entra si Patrimonio no tiene cartera todavia. false para partir sin ella.
       DEMO_DATOS: ${DEMO_DATOS:-true}

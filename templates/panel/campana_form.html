@@ -1,0 +1,53 @@
+{% extends "panel/base_panel.html" %}
+
+{% block titulo_panel %}Nueva campaña{% endblock %}
+{% block rotulo %}{{ empresa.trade_name }}{% endblock %}
+{% block encabezado %}Nueva campaña{% endblock %}
+
+{% block panel %}
+
+<p class="mb-4">
+    <a class="ap-micro" href="{% url 'panel:cliente_detalle' empresa.pk %}">&larr; Volver a {{ empresa.trade_name }}</a>
+</p>
+
+<div class="row">
+    <div class="col-lg-7">
+        <form method="post" novalidate>
+            {% csrf_token %}
+            {% for error in form.non_field_errors %}<p class="ap-aviso ap-aviso--error">{{ error }}</p>{% endfor %}
+            <div class="row g-4">
+                {% for campo in form %}
+                <div class="{% if campo.name == 'name' or campo.name == 'channels' %}col-12{% else %}col-md-6{% endif %}">
+                    <label class="form-label" for="{{ campo.id_for_label }}">
+                        {{ campo.label|capfirst }}{% if campo.field.required %} <span style="color: var(--ap-oro)">*</span>{% endif %}
+                    </label>
+                    {% if campo.name == 'channels' %}
+                    <div class="d-flex flex-wrap gap-4">
+                        {% for opcion in campo %}
+                        <label class="form-check-label ap-nota">{{ opcion.tag }} {{ opcion.choice_label }}</label>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    {{ campo }}
+                    {% endif %}
+                    {% if campo.help_text %}<div class="form-text">{{ campo.help_text }}</div>{% endif %}
+                    {% for error in campo.errors %}<div class="ap-error mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                {% endfor %}
+                <div class="col-12 pt-3 d-flex flex-wrap gap-3">
+                    <button class="btn btn-ap" type="submit">Crear campaña</button>
+                    <a class="btn btn-ap-linea" href="{% url 'panel:cliente_detalle' empresa.pk %}">Cancelar</a>
+                </div>
+            </div>
+        </form>
+    </div>
+    <div class="col-lg-5">
+        <p class="ap-micro">
+            Una entrega de cartera pasa a la plataforma de pagos con la campaña a la que se asignó. Si la
+            empresa tiene exactamente una campaña en curso, se asigna sola; con cero o con varias, la
+            entrega espera a que la asignes desde la ficha.
+        </p>
+    </div>
+</div>
+
+{% endblock %}

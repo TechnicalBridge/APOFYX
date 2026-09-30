@@ -8,5 +8,6 @@ urlpatterns = [
     path("api/", include("assistant.urls")),
     path("api/", include("integracion.urls")),
     path("panel/", include("crm.panel_urls")),
+    path("empresas/", include("crm.portal_urls")),
     path("", include("crm.urls")),
 ]

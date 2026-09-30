@@ -9,6 +9,8 @@ lista se quita: el propio ENUM es la restriccion.
 import crm.campos
 from django.db import migrations
 
+from crm.operaciones import SiLaTablaExiste
+
 
 class Migration(migrations.Migration):
 
@@ -42,9 +44,9 @@ class Migration(migrations.Migration):
             name='status',
             field=crm.campos.Categoria(choices=[('new', 'Nuevo'), ('contacted', 'Contactado'), ('qualified', 'Calificado'), ('converted', 'Convertido'), ('discarded', 'Descartado')], default='new', max_length=20, verbose_name='estado'),
         ),
-        migrations.AlterField(
+        SiLaTablaExiste(migrations.AlterField(
             model_name='portfoliohandover',
             name='overdue_bracket',
             field=crm.campos.Categoria(choices=[('1-30', '1 a 30 dias'), ('31-90', '31 a 90 dias'), ('91-120', '91 a 120 dias')], max_length=20, verbose_name='tramo de mora'),
-        ),
+        )),
     ]

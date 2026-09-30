@@ -1,0 +1,63 @@
+{% extends "portal/base_portal.html" %}
+{% load static %}
+
+{% block titulo_portal %}Subir cartera{% endblock %}
+{% block encabezado %}Subir cartera{% endblock %}
+
+{% block portal %}
+
+<div class="row g-5">
+    <div class="col-lg-6">
+        <form method="post" enctype="multipart/form-data" novalidate>
+            {% csrf_token %}
+            {% for error in form.non_field_errors %}<p class="ap-aviso ap-aviso--error">{{ error }}</p>{% endfor %}
+            {% for campo in form %}
+            <div class="mb-3">
+                <label class="form-label" for="{{ campo.id_for_label }}">{{ campo.label }}</label>
+                {{ campo }}
+                {% if campo.help_text %}<div class="form-text">{{ campo.help_text }}</div>{% endif %}
+                {% for error in campo.errors %}<div class="ap-error mt-1">{{ error }}</div>{% endfor %}
+            </div>
+            {% endfor %}
+            <button class="btn btn-ap" type="submit">Subir</button>
+        </form>
+    </div>
+
+    <div class="col-lg-6">
+        <h2 class="ap-h3 mb-3">La planilla</h2>
+        <p class="ap-nota">
+            Una fila por cada cargo impago, separada por punto y coma. Las filas de un mismo cliente repiten
+            sus datos. Un cliente al día va en una sola fila, con las columnas de cargo vacías.
+        </p>
+        <a class="btn btn-ap-linea" href="{% static 'plantillas/cartera-v1.plantilla.csv' %}" download>
+            Descargar la plantilla
+        </a>
+    </div>
+</div>
+
+{% if respuesta %}
+<h2 class="ap-h3 mt-5 mb-3">
+    Lote {{ respuesta.lote }}: {{ respuesta.aceptadas }} de {{ respuesta.recibidas }} aceptadas
+    {% if respuesta.repetido %}<span class="ap-micro">· ya lo habíamos recibido</span>{% endif %}
+</h2>
+<table class="ap-tabla">
+    <thead><tr><th>Cliente</th><th>Resultado</th><th>Detalle</th></tr></thead>
+    <tbody>
+        {% for fila in respuesta.resultados %}
+        <tr>
+            <td class="ap-mono">{{ fila.id_externo|default:"—" }}</td>
+            <td>{{ fila.resultado }}</td>
+            <td>
+                {% if fila.errores %}
+                {% for error in fila.errores %}<span class="d-block">{{ error.mensaje }}</span>{% endfor %}
+                {% elif fila.mora_dias is not None %}
+                {{ fila.mora_dias }} días de mora
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{% endblock %}

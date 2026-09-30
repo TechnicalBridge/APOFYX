@@ -72,8 +72,20 @@
     },
     {
       "id_externo": "CTR-2025-022",
-      "accion": "retirar",
-      "motivo_retiro": "pago_directo"
+      "deudor": {
+        "rut": "15227640-0",
+        "tipo": "persona",
+        "nombre": "Tomás Fuentes Leiva",
+        "correo": "tomas.fuentes@correo.cl",
+        "telefono": "+56955512340"
+      },
+      "moneda": "CLP",
+      "concepto": "Arriendo mensual",
+      "referencias": {
+        "contrato": "CTR-2025-022",
+        "propiedad": "Los Castaños 455, La Florida"
+      },
+      "cargos": []
     }
   ]
 }

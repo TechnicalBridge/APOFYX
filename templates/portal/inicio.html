@@ -1,0 +1,28 @@
+{% extends "portal/base_portal.html" %}
+{% load cifras %}
+
+{% block titulo_portal %}Mi cartera{% endblock %}
+{% block encabezado %}Mi cartera{% endblock %}
+{% block cabecera_extra %}
+<a class="btn btn-ap" href="{% url 'portal:subir' %}">Subir cartera</a>
+{% endblock %}
+
+{% block portal %}
+
+{% if recibida %}
+{% include "panel/_cartera_recibida.html" %}
+{% else %}
+<div class="ap-panel p-4">
+    <h2 class="ap-h3 mb-3">Todavía no nos entrega cartera</h2>
+    <p class="ap-nota mb-3">
+        Hay dos formas: subir la planilla del contrato desde <a href="{% url 'portal:subir' %}">Subir cartera</a>,
+        o conectar su sistema con una clave de API desde <a href="{% url 'portal:conexion' %}">Conectar mi sistema</a>.
+    </p>
+    <p class="ap-micro mb-0">
+        Entréguenos todos sus clientes con contrato cada mes, deban o no: los que están al día van sin cargos.
+        Nosotros detectamos a los morosos, y la plataforma de pagos les envía cómo pagar.
+    </p>
+</div>
+{% endif %}
+
+{% endblock %}

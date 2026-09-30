@@ -40,7 +40,6 @@
             <tr>
                 <th>Persona</th>
                 <th>Empresa</th>
-                <th>Rubro</th>
                 <th class="ap-num">Cartera</th>
                 <th>Gestión actual</th>
                 <th>Origen</th>
@@ -56,7 +55,6 @@
                     <span class="ap-micro d-block">{{ lead.email }}</span>
                 </td>
                 <td>{{ lead.company_name }}</td>
-                <td>{{ lead.industry.name|default:"—" }}</td>
                 <td class="ap-num">{{ lead.estimated_debtor_count|default:"—" }}</td>
                 <td>{{ lead.get_current_collection_method_display|default:"—" }}</td>
                 <td><span class="ap-micro">{{ lead.get_source_display }}</span></td>
@@ -64,7 +62,7 @@
                 <td class="ap-micro">{{ lead.created_at|date:"d/m/Y H:i" }}</td>
             </tr>
             {% empty %}
-            <tr><td colspan="8" class="ap-micro">No hay leads con ese filtro.</td></tr>
+            <tr><td colspan="7" class="ap-micro">No hay leads con ese filtro.</td></tr>
             {% endfor %}
         </tbody>
     </table>

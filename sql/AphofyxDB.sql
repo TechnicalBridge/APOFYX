@@ -19,9 +19,9 @@
 --  abajo y volver a ejecutar el archivo completo.
 --
 --  CONTENIDO
---      PARTE 1 — DDL   base de datos, 21 tablas, 4 vistas, restricciones e indices
---      PARTE 2 — DML   datos de referencia (rubros)
---      PARTE 3 — DML   datos de demostracion (5 clientes y sus campanas)
+--      PARTE 1 — DDL   base de datos, 20 tablas, 4 vistas, restricciones e indices
+--      PARTE 2 —       (vacia: ya no hay rubros; ver la nota de la parte 2)
+--      PARTE 3 — DML   datos de demostracion (6 clientes y sus campanas)
 --      PARTE 4 — DML   catalogo del asistente (intenciones, patrones, respuestas)
 --      PARTE 5 —       permisos para las pruebas
 --      PARTE 6 —       verificacion final
@@ -67,6 +67,10 @@
 --  TABLAS DE DJANGO
 --  Este script NO crea auth_user, django_session ni django_migrations.
 --  Esas las genera "python manage.py migrate" y no deben escribirse a mano.
+--  Por lo mismo, la clave foranea de crm_creditorcontact.user_id a auth_user
+--  la agrega la migracion crm/0004: cuando corre este script, auth_user
+--  todavia no existe. Las sesiones de las cuentas (panel y portal de empresas)
+--  viven en django_session.
 -- =============================================================================
 
 
@@ -95,6 +99,7 @@ USE apofyx;
 --  Reinicio para desarrollo — DESCOMENTAR SOLO SI QUIERES BORRAR TODO
 --  El orden es inverso al de creacion para respetar las claves foraneas.
 -- -----------------------------------------------------------------------------
+-- DROP TABLE IF EXISTS integracion_platformconnection;
 -- DROP TABLE IF EXISTS integracion_outboundevent;
 -- DROP TABLE IF EXISTS integracion_inboundevent;
 -- DROP TABLE IF EXISTS integracion_subscription;
@@ -112,31 +117,15 @@ USE apofyx;
 -- DROP TABLE IF EXISTS assistant_intent;
 -- DROP TABLE IF EXISTS crm_campaignfunnelsnapshot;
 -- DROP TABLE IF EXISTS crm_campaign;
--- DROP TABLE IF EXISTS crm_portfoliohandover;
 -- DROP TABLE IF EXISTS crm_creditorcontact;
 -- DROP TABLE IF EXISTS crm_creditor;
--- DROP TABLE IF EXISTS crm_industry;
 
 
 -- =============================================================================
---  A. TABLAS DE REFERENCIA
+--  A. SIN TABLAS DE REFERENCIA
+--  Hubo una de rubros (crm_industry). Se fue: APOFYX cobra para cualquier
+--  empresa con cobros atrasados, y el rubro no cambiaba nada de como se cobra.
 -- =============================================================================
-
--- -----------------------------------------------------------------------------
---  crm_industry — rubros atendidos (gimnasios, educacion, salud, ISP, ...)
--- -----------------------------------------------------------------------------
-CREATE TABLE crm_industry (
-    id            BIGINT       NOT NULL AUTO_INCREMENT,
-    name          VARCHAR(80)  NOT NULL,
-    slug          VARCHAR(80)  NOT NULL,
-    description   VARCHAR(255)     NULL,
-    is_active     BOOL         NOT NULL DEFAULT TRUE,
-    created_at    DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-
-    CONSTRAINT pk_industry        PRIMARY KEY (id),
-    CONSTRAINT uq_industry_name   UNIQUE (name),
-    CONSTRAINT uq_industry_slug   UNIQUE (slug)
-) ENGINE=InnoDB;
 
 
 -- =============================================================================
@@ -144,8 +133,9 @@ CREATE TABLE crm_industry (
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
---  crm_creditor — las empresas acreedoras que contratan a APOFYX.
---  Es lo unico que administra el panel (docs §12.2).
+--  crm_creditor — las empresas acreedoras que contratan a APOFYX. En pantalla,
+--  "la empresa". La da de alta el personal, o se registra sola en el portal
+--  de empresas y parte en 'onboarding' hasta que el personal aprueba su acceso.
 --
 --  tax_id : RUT normalizado SIN puntos y CON guion -> '76543210-3'
 --           Se guarda normalizado para que el UNIQUE funcione de verdad;
@@ -160,7 +150,6 @@ CREATE TABLE crm_creditor (
     legal_name    VARCHAR(160)  NOT NULL,
     trade_name    VARCHAR(120)  NOT NULL,
     tax_id        VARCHAR(12)   NOT NULL,
-    industry_id   BIGINT        NOT NULL,
     status        ENUM('onboarding', 'active', 'paused', 'churned')   NOT NULL DEFAULT 'onboarding',
     client_since  DATE              NULL,
     commune       VARCHAR(80)       NULL,
@@ -174,15 +163,11 @@ CREATE TABLE crm_creditor (
     CONSTRAINT pk_creditor         PRIMARY KEY (id),
     CONSTRAINT uq_creditor_tax_id  UNIQUE (tax_id),
 
-    CONSTRAINT fk_creditor_industry FOREIGN KEY (industry_id)
-        REFERENCES crm_industry (id) ON DELETE RESTRICT,
-
     CONSTRAINT ck_creditor_tax_id CHECK (
         tax_id REGEXP '^[0-9]{7,8}-[0-9K]$'
     ),
 
     INDEX ix_creditor_status   (status),
-    INDEX ix_creditor_industry (industry_id),
     INDEX ix_creditor_trade    (trade_name)
 ) ENGINE=InnoDB;
 
@@ -194,6 +179,13 @@ CREATE TABLE crm_creditor (
 --  principal y NULL cuando no lo es. Como MySQL ignora los NULL en un indice
 --  UNIQUE, esto fuerza "a lo mas UN contacto principal por empresa" a nivel
 --  de base de datos, sin necesidad de un trigger.
+--
+--  LA CUENTA DE LA EMPRESA ES UN CONTACTO CON ACCESO
+--  user_id       : su usuario del portal de empresas (auth_user). NULL si el
+--                  contacto no tiene cuenta. Uno por usuario.
+--  portal_access : 'pending' al registrarse, 'granted' cuando el personal lo
+--                  aprueba, 'revoked' si se lo quita. NULL sin cuenta.
+--  La FK de user_id la agrega la migracion crm/0004 (ver la cabecera).
 -- -----------------------------------------------------------------------------
 CREATE TABLE crm_creditorcontact (
     id            BIGINT        NOT NULL AUTO_INCREMENT,
@@ -203,6 +195,8 @@ CREATE TABLE crm_creditorcontact (
     email         VARCHAR(254)  NOT NULL,
     phone         VARCHAR(20)       NULL,
     is_primary    BOOL          NOT NULL DEFAULT FALSE,
+    user_id       INT               NULL,
+    portal_access ENUM('pending', 'granted', 'revoked')   NULL,
     created_at    DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at    DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
                                          ON UPDATE CURRENT_TIMESTAMP(6),
@@ -212,42 +206,12 @@ CREATE TABLE crm_creditorcontact (
     CONSTRAINT pk_contact           PRIMARY KEY (id),
     CONSTRAINT uq_contact_email     UNIQUE (creditor_id, email),
     CONSTRAINT uq_contact_primary   UNIQUE (creditor_id, primary_slot),
+    CONSTRAINT uq_contact_user      UNIQUE (user_id),
 
     CONSTRAINT fk_contact_creditor FOREIGN KEY (creditor_id)
         REFERENCES crm_creditor (id) ON DELETE CASCADE,
 
     INDEX ix_contact_creditor (creditor_id)
-) ENGINE=InnoDB;
-
-
--- -----------------------------------------------------------------------------
---  crm_portfoliohandover — volumen de cartera que la empresa entrega a gestion,
---  por periodo mensual y tramo de mora.
---
---  OJO: aca NO hay deudores ni deudas individuales. Solo el agregado comercial
---  (cuantos registros y de que ticket promedio). Ver docs §2.2.
---
---  period_month : se guarda siempre como el dia 1 del mes -> 2026-09-01
--- -----------------------------------------------------------------------------
-CREATE TABLE crm_portfoliohandover (
-    id              BIGINT         NOT NULL AUTO_INCREMENT,
-    creditor_id      BIGINT         NOT NULL,
-    period_month          DATE           NOT NULL,
-    overdue_bracket    ENUM('1-30', '31-90', '91-120')    NOT NULL,
-    debtor_count    INT UNSIGNED   NOT NULL DEFAULT 0,
-    average_debt_clp  DECIMAL(12,2)  NOT NULL DEFAULT 0,
-    received_at     DATETIME(6)        NULL,
-    created_at      DATETIME(6)    NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-
-    CONSTRAINT pk_handover      PRIMARY KEY (id),
-    CONSTRAINT uq_handover_slot UNIQUE (creditor_id, period_month, overdue_bracket),
-
-    CONSTRAINT fk_handover_creditor FOREIGN KEY (creditor_id)
-        REFERENCES crm_creditor (id) ON DELETE CASCADE,
-
-    CONSTRAINT ck_handover_debt CHECK (average_debt_clp >= 0),
-
-    INDEX ix_handover_creditor_period (creditor_id, period_month)
 ) ENGINE=InnoDB;
 
 
@@ -492,8 +456,7 @@ CREATE TABLE assistant_message (
 
 -- =============================================================================
 --  E. LEADS
---  Va al final porque depende de crm_creditor, crm_industry y
---  assistant_conversation.
+--  Va al final porque depende de crm_creditor y assistant_conversation.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -516,7 +479,6 @@ CREATE TABLE crm_lead (
     estimated_debtor_count     INT UNSIGNED        NULL,
     estimated_overdue_clp     BIGINT UNSIGNED     NULL,
     current_collection_method ENUM('nadie', 'llamadas', 'mensajes', 'externo', 'mixto')         NULL,
-    industry_id      BIGINT            NULL,
     source           ENUM('form', 'assistant')   NOT NULL DEFAULT 'form',
     status           ENUM('new', 'contacted', 'qualified', 'converted', 'discarded')   NOT NULL DEFAULT 'new',
     inquiry_message  TEXT              NULL,
@@ -528,8 +490,6 @@ CREATE TABLE crm_lead (
 
     CONSTRAINT pk_lead PRIMARY KEY (id),
 
-    CONSTRAINT fk_lead_industry FOREIGN KEY (industry_id)
-        REFERENCES crm_industry (id) ON DELETE SET NULL,
     CONSTRAINT fk_lead_conversation FOREIGN KEY (conversation_id)
         REFERENCES assistant_conversation (id) ON DELETE SET NULL,
     CONSTRAINT fk_lead_creditor FOREIGN KEY (converted_creditor_id)
@@ -575,9 +535,6 @@ CREATE TABLE crm_lead (
 
 -- -----------------------------------------------------------------------------
 --  cartera_batch — una entrega de cartera, con su fecha de corte.
---
---  No confundir con crm_portfoliohandover, que es el agregado comercial por
---  tramo de mora que muestra el panel. Esto es la entrega real.
 --
 --  payload_hash : huella del contenido recibido. Sirve para distinguir un
 --                 reenvio identico —al que se le responde lo mismo— de un
@@ -874,52 +831,74 @@ CREATE TABLE integracion_outboundevent (
 ) ENGINE=InnoDB;
 
 
+-- -----------------------------------------------------------------------------
+--  integracion_platformconnection — con que plataforma de pagos esta
+--  conectada APOFYX, y con que clave.
+--
+--  Una sola fila: el id es siempre 1 y el CHECK lo obliga. La llena el panel
+--  del personal: al conectar se comprueba la clave contra la plataforma
+--  (GET /api/v1/cuenta), se suscribe a sus avisos y se guarda el secreto con
+--  que los firma. Reemplaza a las variables de entorno DATABRIDGE_*.
+--
+--  api_key y events_secret van en claro: la clave hay que presentarla y con el
+--  secreto hay que firmar, y una huella no sirve para ninguna de las dos.
+-- -----------------------------------------------------------------------------
+CREATE TABLE integracion_platformconnection (
+    id             SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+    url            VARCHAR(300)      NOT NULL,
+    api_key        VARCHAR(120)      NOT NULL,
+    events_secret  VARCHAR(120)          NULL,
+    platform_rut   VARCHAR(12)           NULL,
+    platform_name  VARCHAR(120)          NULL,
+    connected_at   DATETIME(6)           NULL,
+    last_error     VARCHAR(300)          NULL,
+    updated_at     DATETIME(6)       NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                                              ON UPDATE CURRENT_TIMESTAMP(6),
+
+    CONSTRAINT pk_platformconnection PRIMARY KEY (id),
+    CONSTRAINT ck_platformconnection_una CHECK (id = 1)
+) ENGINE=InnoDB;
+
+
 -- =============================================================================
 --  H. VISTAS PARA EL PANEL
 --  Resuelven las tarjetas de resumen de docs §12.2 sin repetir SQL en Django.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
---  v_company_overview — una fila por cliente, con su cartera del ultimo periodo.
+--  v_company_overview — una fila por cliente, con la cartera que tiene en
+--  gestion: cuantas deudas, el ticket medio en pesos y el corte de su ultima
+--  entrega. Sale de la cartera real, deuda por deuda.
+--
+--  El ticket se promedia solo sobre las deudas en pesos: un promedio que
+--  mezclara pesos con UF no significaria nada.
 -- -----------------------------------------------------------------------------
---  OJO: cada empresa tiene VARIAS filas por periodo en crm_portfoliohandover,
---  una por tramo de mora. Por eso la cartera se agrega en una tabla derivada
---  antes de unirla; de lo contrario la vista devolveria tres filas por empresa.
---  El ticket medio se pondera por cantidad de registros, no es un promedio
---  simple de los tres tramos.
 CREATE OR REPLACE VIEW v_company_overview AS
 SELECT
-    c.id                       AS creditor_id,
+    c.id              AS creditor_id,
     c.trade_name,
     c.legal_name,
     c.tax_id,
     c.status,
-    i.name                     AS industry,
     c.client_since,
-    COALESCE(pf.total_debtors, 0) AS total_debtors,
-    COALESCE(pf.average_debt_clp, 0)    AS average_debt_clp,
-    pf.period_month                         AS portfolio_period,
+    COALESCE(cd.debts_in_management, 0) AS debts_in_management,
+    COALESCE(cd.average_debt_clp, 0)    AS average_debt_clp,
+    cd.last_cut_off,
     (SELECT COUNT(*) FROM crm_campaign cm
       WHERE cm.creditor_id = c.id AND cm.status = 'running') AS running_campaigns
 FROM crm_creditor c
-JOIN crm_industry i ON i.id = c.industry_id
 LEFT JOIN (
-    SELECT
-        a.creditor_id,
-        a.period_month,
-        SUM(a.debtor_count) AS total_debtors,
-        ROUND(SUM(a.average_debt_clp * a.debtor_count)
-              / NULLIF(SUM(a.debtor_count), 0), 2) AS average_debt_clp
-    FROM crm_portfoliohandover a
-    JOIN (
-        SELECT creditor_id, MAX(period_month) AS period_month
-          FROM crm_portfoliohandover
-         GROUP BY creditor_id
-    ) ultimo
-      ON ultimo.creditor_id = a.creditor_id
-     AND ultimo.period_month     = a.period_month
-    GROUP BY a.creditor_id, a.period_month
-) pf ON pf.creditor_id = c.id;
+    SELECT d.creditor_id,
+           COUNT(*)       AS debts_in_management,
+           MAX(b.cut_off) AS last_cut_off,
+           ROUND(AVG(CASE WHEN d.currency = 'CLP' THEN t.monto END), 2) AS average_debt_clp
+      FROM cartera_debt d
+      JOIN cartera_batch b ON b.id = d.last_batch_id
+      LEFT JOIN (SELECT debt_id, SUM(amount) AS monto
+                   FROM cartera_debtcharge GROUP BY debt_id) t ON t.debt_id = d.id
+     WHERE d.status IN ('open', 'repacted', 'disputed')
+     GROUP BY d.creditor_id
+) cd ON cd.creditor_id = c.id;
 
 
 -- -----------------------------------------------------------------------------
@@ -968,13 +947,16 @@ WHERE speaker = 'assistant'
 GROUP BY DATE(created_at);
 
 -- =============================================================================
---  PARTE 2 — DML · DATOS DE REFERENCIA
+--  PARTE 2 — DATOS DE REFERENCIA (vacia)
 -- =============================================================================
---  Rubros atendidos. El sitio los lee desde aca en vez de tenerlos escritos
---  en el HTML (docs §12.1).
+--  Aca estaban los rubros. Ya no hay: APOFYX no clasifica a las empresas por
+--  rubro, porque no cambia nada de como se cobra.
 --
---  NO hay tabla de planes: APOFYX no publica tarifas. El sitio lleva siempre
---  al formulario de contacto y el valor se cotiza caso a caso.
+--  Tampoco hay tabla de planes: APOFYX no publica tarifas. El sitio lleva
+--  siempre al formulario de contacto y el valor se cotiza caso a caso.
+--
+--  (La vista v_deuda_features quedo aqui por orden historico: depende de las
+--  tablas de cartera e integracion, y no de datos de referencia.)
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -1061,40 +1043,19 @@ LEFT JOIN (
 
 
 
--- -----------------------------------------------------------------------------
---  Rubros atendidos (docs §4)
--- -----------------------------------------------------------------------------
-INSERT INTO crm_industry (name, slug, description) VALUES
-    ('Gimnasios y fitness',      'gimnasios',
-     'Cadenas y centros deportivos con cuotas mensuales.'),
-    ('Educación',                'educacion',
-     'Institutos profesionales, preuniversitarios y colegios particulares.'),
-    ('Salud',                    'salud',
-     'Clínicas dentales, centros médicos y veterinarias con tratamientos en cuotas.'),
-    ('Telecomunicaciones',       'telecomunicaciones',
-     'ISP regionales y proveedores de televisión e internet.'),
-    ('Administración de edificios', 'administracion-edificios',
-     'Administradoras de condominios y gastos comunes.'),
-    ('Retail especializado',     'retail',
-     'Comercio con venta en cuotas propias, sin financiera asociada.'),
-    ('Corretaje y arriendos',    'arriendos',
-     'Corredoras que administran arriendos y cobran la renta mes a mes.')
-AS nuevo
-ON DUPLICATE KEY UPDATE
-    description = nuevo.description;
-
-
 -- =============================================================================
 --  PARTE 3 — DML · DATOS DE DEMOSTRACION
 -- =============================================================================
---  Los cinco clientes de docs §6.1, con sus contactos, carteras, campanas y
+--  Los cinco clientes de docs §6.1 y Patrimonio, con sus contactos, campanas y
 --  metricas. Toda la data es SINTETICA: las empresas no existen, los RUT son
 --  inventados (con digito verificador valido) y las personas son ficticias.
 --
 --  Las metricas suman EXACTAMENTE el embudo consolidado de docs §11.1 y §11.2:
---      10.000 deudores · 26.400 enviados · 24.100 entregados
---       6.450 abiertos ·  1.010 respondidos ·   738 clics
+--      26.400 enviados · 24.100 entregados · 6.450 abiertos
+--       1.010 respondidos · 738 clics
 --         284 reportes de fraude · 417 opt-outs · 193 disputas
+--  La cartera de cada empresa no se carga aca: llega por la integracion, deuda
+--  por deuda (la de Patrimonio, con manage.py cargar_demo).
 -- =============================================================================
 
 
@@ -1103,38 +1064,31 @@ ON DUPLICATE KEY UPDATE
 --  1. Empresas cliente
 -- -----------------------------------------------------------------------------
 INSERT INTO crm_creditor
-    (legal_name, trade_name, tax_id, industry_id,
+    (legal_name, trade_name, tax_id,
      status, client_since, commune, region, website) VALUES
     ('Vitalis Fitness SpA', 'Vitalis Gym', '76543210-3',
-     (SELECT id FROM crm_industry WHERE slug = 'gimnasios'),
      'active', '2025-03-10', 'Providencia', 'Metropolitana', 'https://vitalis.cl'),
 
     ('Instituto Profesional Andes Ltda.', 'Instituto Andes', '77812341-K',
-     (SELECT id FROM crm_industry WHERE slug = 'educacion'),
      'active', '2025-07-01', 'Santiago', 'Metropolitana', 'https://ipandes.cl'),
 
     ('Servicios Dentales Sonrisa Norte SpA', 'Clínica Dental Sonrisa Norte', '76998877-7',
-     (SELECT id FROM crm_industry WHERE slug = 'salud'),
      'active', '2025-09-22', 'La Serena', 'Coquimbo', 'https://sonrisanorte.cl'),
 
     ('NetSur Telecomunicaciones Ltda.', 'NetSur ISP', '78123456-7',
-     (SELECT id FROM crm_industry WHERE slug = 'telecomunicaciones'),
      'active', '2026-01-15', 'Valdivia', 'Los Ríos', 'https://netsur.cl'),
 
     ('Administradora Torres del Parque SpA', 'Torres del Parque', '77456789-5',
-     (SELECT id FROM crm_industry WHERE slug = 'administracion-edificios'),
      'active', '2026-04-02', 'Ñuñoa', 'Metropolitana', NULL),
 
     -- El acreedor que entrega su cartera por el contrato de integracion: una
     -- corredora que administra arriendos, y cuyos morosos son arrendatarios.
     ('Patrimonio Inmuebles SpA', 'Patrimonio Inmuebles', '76418902-7',
-     (SELECT id FROM crm_industry WHERE slug = 'arriendos'),
      'active', '2026-09-01', 'Vitacura', 'Metropolitana', 'https://patrimonioinmuebles.cl')
 AS nuevo
 ON DUPLICATE KEY UPDATE
     legal_name   = nuevo.legal_name,
     trade_name   = nuevo.trade_name,
-    industry_id  = nuevo.industry_id,
     status       = nuevo.status,
     client_since = nuevo.client_since,
     commune      = nuevo.commune,
@@ -1184,36 +1138,9 @@ ON DUPLICATE KEY UPDATE
 
 
 -- -----------------------------------------------------------------------------
---  3. Cartera entregada — periodo agosto 2026
---  Los totales por empresa calzan con docs §6.1 y suman 10.000 deudores.
+--  3. (Aca estaba la cartera de agosto como agregado por tramo. Ya no: la
+--     cartera de una empresa es la que entrega, deuda por deuda.)
 -- -----------------------------------------------------------------------------
-INSERT INTO crm_portfoliohandover
-    (creditor_id, period_month, overdue_bracket, debtor_count, average_debt_clp, received_at) VALUES
-    -- Vitalis Gym — 6.200 deudores, ticket medio $41.300
-    ((SELECT id FROM crm_creditor WHERE tax_id='76543210-3'), '2026-08-01', '1-30',   3100,  38900.00, '2026-08-02 09:14:00'),
-    ((SELECT id FROM crm_creditor WHERE tax_id='76543210-3'), '2026-08-01', '31-90',  2200,  42700.00, '2026-08-02 09:14:00'),
-    ((SELECT id FROM crm_creditor WHERE tax_id='76543210-3'), '2026-08-01', '91-120',  900,  45100.00, '2026-08-02 09:14:00'),
-    -- Instituto Andes — 980 deudores, ticket medio $268.000
-    ((SELECT id FROM crm_creditor WHERE tax_id='77812341-K'), '2026-08-01', '1-30',    320, 248000.00, '2026-08-03 11:02:00'),
-    ((SELECT id FROM crm_creditor WHERE tax_id='77812341-K'), '2026-08-01', '31-90',   430, 271000.00, '2026-08-03 11:02:00'),
-    ((SELECT id FROM crm_creditor WHERE tax_id='77812341-K'), '2026-08-01', '91-120',  230, 289000.00, '2026-08-03 11:02:00'),
-    -- Clinica Dental Sonrisa Norte — 1.450 deudores, ticket medio $184.000
-    ((SELECT id FROM crm_creditor WHERE tax_id='76998877-7'), '2026-08-01', '1-30',    700, 171000.00, '2026-08-03 15:40:00'),
-    ((SELECT id FROM crm_creditor WHERE tax_id='76998877-7'), '2026-08-01', '31-90',   520, 190000.00, '2026-08-03 15:40:00'),
-    ((SELECT id FROM crm_creditor WHERE tax_id='76998877-7'), '2026-08-01', '91-120',  230, 203000.00, '2026-08-03 15:40:00'),
-    -- NetSur ISP — 1.100 deudores, ticket medio $27.400
-    ((SELECT id FROM crm_creditor WHERE tax_id='78123456-7'), '2026-08-01', '1-30',    640,  25900.00, '2026-08-04 08:20:00'),
-    ((SELECT id FROM crm_creditor WHERE tax_id='78123456-7'), '2026-08-01', '31-90',   350,  28300.00, '2026-08-04 08:20:00'),
-    ((SELECT id FROM crm_creditor WHERE tax_id='78123456-7'), '2026-08-01', '91-120',  110,  31700.00, '2026-08-04 08:20:00'),
-    -- Torres del Parque — 270 deudores, ticket medio $198.000
-    ((SELECT id FROM crm_creditor WHERE tax_id='77456789-5'), '2026-08-01', '1-30',     90, 176000.00, '2026-08-05 17:05:00'),
-    ((SELECT id FROM crm_creditor WHERE tax_id='77456789-5'), '2026-08-01', '31-90',   110, 199000.00, '2026-08-05 17:05:00'),
-    ((SELECT id FROM crm_creditor WHERE tax_id='77456789-5'), '2026-08-01', '91-120',   70, 224000.00, '2026-08-05 17:05:00')
-AS nuevo
-ON DUPLICATE KEY UPDATE
-    debtor_count   = nuevo.debtor_count,
-    average_debt_clp = nuevo.average_debt_clp,
-    received_at    = nuevo.received_at;
 
 
 -- -----------------------------------------------------------------------------
@@ -1342,7 +1269,7 @@ INSERT INTO assistant_intent (slug, name, audience, description, tiebreak_priori
     ('que_es_apofyx',          'Que es APOFYX',                'prospect', 'Explicacion breve de la empresa y a quien sirve.',       30),
     ('como_funciona',          'Como funciona el servicio',    'prospect', 'El recorrido completo, sin jerga.',                      30),
     ('precios_planes',         'Precios y planes',             'prospect', 'Planes, valor en UF y comision de exito.',               20),
-    ('rubros_requisitos',      'Rubros y requisitos',          'prospect', 'Que rubros se atienden y cartera minima.',               30),
+    ('rubros_requisitos',      'Para que empresas sirve',      'prospect', 'A quien atiende APOFYX y como se suma una empresa.',     30),
     ('integracion_datos',      'Integracion de la cartera',    'prospect', 'Formato CSV, campos requeridos y API.',                  30),
     ('seguridad_cumplimiento', 'Seguridad y cumplimiento',     'prospect', 'Marco legal y tratamiento de datos.',                    30),
     ('agendar_demo',           'Agendar una demostracion',     'prospect', 'Flujo multipaso que termina grabando un lead.',          10),
@@ -1556,8 +1483,8 @@ INSERT INTO assistant_intentresponse (intent_id, `response_text`, display_order,
      0, 'contact_sales'),
 
     ((SELECT id FROM assistant_intent WHERE slug='rubros_requisitos'),
-     'Atendemos gimnasios y centros deportivos, educación, salud, telecomunicaciones, administración de edificios y retail con venta en cuotas propias. El requisito práctico es tener al menos unos 200 registros en mora: bajo ese volumen la automatización no se justifica frente a una gestión manual.',
-     0, 'show_industries'),
+     'Atendemos a cualquier empresa que cobre todos los meses y tenga clientes que se atrasan: arriendos, colegios, gimnasios, clínicas o servicios. El rubro no cambia cómo cobramos. Su empresa se registra en el portal de empresas, la validamos y desde ahí nos entrega su cartera, con una planilla o conectando su sistema.',
+     0, 'contact_sales'),
 
     ((SELECT id FROM assistant_intent WHERE slug='integracion_datos'),
      'Puede entregarnos la cartera de dos formas: subiendo un archivo CSV desde su panel, o conectando nuestra API si prefiere que se sincronice sola. Los campos mínimos son RUT, nombre, teléfono, correo, monto adeudado, fecha de vencimiento, número de documento y sucursal.',
@@ -1662,9 +1589,7 @@ SELECT TABLE_NAME AS tabla,
  ORDER BY origen, TABLE_NAME;
 
 SELECT '--- Embudo cargado, debe calzar con docs §11.1 ---' AS `Resultado`;
-SELECT 'Cartera total (deudores)' AS indicador, SUM(debtor_count) AS valor
-  FROM crm_portfoliohandover WHERE period_month = '2026-08-01'
-UNION ALL SELECT 'Mensajes enviados',  SUM(messages_sent)         FROM crm_campaignfunnelsnapshot
+SELECT 'Mensajes enviados' AS indicador, SUM(messages_sent) AS valor FROM crm_campaignfunnelsnapshot
 UNION ALL SELECT 'Entregados',         SUM(messages_delivered)    FROM crm_campaignfunnelsnapshot
 UNION ALL SELECT 'Abrieron',           SUM(messages_opened)       FROM crm_campaignfunnelsnapshot
 UNION ALL SELECT 'Respondieron',       SUM(replies_received)      FROM crm_campaignfunnelsnapshot
@@ -1684,8 +1609,8 @@ SELECT i.audience AS publico,
  GROUP BY i.audience WITH ROLLUP;
 
 SELECT '--- Clientes y su cartera ---' AS `Resultado`;
-SELECT trade_name, industry, total_debtors, average_debt_clp
-  FROM v_company_overview ORDER BY total_debtors DESC;
+SELECT trade_name, status, debts_in_management, average_debt_clp, last_cut_off
+  FROM v_company_overview ORDER BY debts_in_management DESC, trade_name;
 
 -- =============================================================================
 --  Fin de AphofyxDB.sql

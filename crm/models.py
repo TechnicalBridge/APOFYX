@@ -8,42 +8,30 @@ distinguia nada —APOFYX tambien es una empresa—. Lo que esa tabla guarda es
 
 Son el espejo de las tablas que crea sql/AphofyxDB.sql (ver docs seccion 14.3).
 
-No hay modelo de deudor, deuda ni pago: APOFYX no procesa pagos. Eso vive en
-DataBridge, en otro repositorio (docs seccion 2.2 y 13).
+La cartera de cada acreedor (deudores, deudas y cargos) vive en la app
+`cartera`, y llega por la integracion. Pagos no hay: APOFYX no procesa pagos.
+Eso vive en DataBridge, en otro repositorio (docs seccion 2.2 y 13).
+
+No hay rubros ni tipos de empresa: APOFYX cobra para cualquier empresa que
+tenga cobros atrasados, y el rubro no cambia nada de como se cobra.
 """
 
-from django.core.validators import MinValueValidator
+from django.conf import settings
 from django.db import models
 
 from .campos import Categoria
-
-
-class Industry(models.Model):
-    """Rubro atendido: gimnasios, educacion, salud, ISP, gastos comunes."""
-
-    name = models.CharField("nombre", max_length=80, unique=True)
-    slug = models.SlugField("identificador", max_length=80, unique=True)
-    description = models.CharField("descripcion", max_length=255, blank=True, null=True)
-    is_active = models.BooleanField("activo", default=True)
-    created_at = models.DateTimeField("creado", auto_now_add=True)
-
-    class Meta:
-        db_table = "crm_industry"
-        verbose_name = "rubro"
-        verbose_name_plural = "rubros"
-        ordering = ["name"]
-
-    def __str__(self):
-        return self.name
 
 
 class Creditor(models.Model):
     """
     Empresa acreedora: la que tiene deudores y contrata a APOFYX para cobrarles.
 
-    Es el cliente que paga. Se llama acreedor y no "empresa" porque en este
-    dominio hay tres empresas distintas en juego —APOFYX, la acreedora y
-    DataBridge— y el nombre tiene que decir cual es.
+    En pantalla es "la empresa", porque asi la llama quien la atiende. En el
+    codigo es acreedor, porque en este dominio hay tres empresas distintas en
+    juego —APOFYX, la acreedora y DataBridge— y el nombre tiene que decir cual
+    es. Puede darla de alta el personal, o registrarse sola en el portal de
+    empresas; en ese caso parte "en incorporacion" hasta que el personal
+    aprueba su acceso.
     """
 
     class Status(models.TextChoices):
@@ -57,10 +45,6 @@ class Creditor(models.Model):
     tax_id = models.CharField(
         "RUT", max_length=12, unique=True,
         help_text="Normalizado, sin puntos y con guion: 76543210-3",
-    )
-    industry = models.ForeignKey(
-        Industry, on_delete=models.PROTECT, related_name="creditors",
-        verbose_name="rubro", db_column="industry_id",
     )
     status = Categoria(
         "estado", max_length=20, choices=Status.choices, default=Status.ONBOARDING
@@ -98,21 +82,6 @@ class Creditor(models.Model):
     def contacto_principal(self):
         return self.contacts.filter(is_primary=True).first()
 
-    @property
-    def cartera_actual(self):
-        """Ultima entrega de cartera, agregando sus tramos de mora."""
-        ultima = self.handovers.order_by("-period_month").first()
-        if ultima is None:
-            return None
-        tramos = self.handovers.filter(period_month=ultima.period_month)
-        total = sum(t.debtor_count for t in tramos)
-        if total == 0:
-            return {"periodo": ultima.period_month, "registros": 0, "ticket": 0}
-        # Deuda media ponderada por cantidad de deudores, no promedio simple.
-        ponderada = sum(t.average_debt_clp * t.debtor_count for t in tramos) / total
-        return {
-            "periodo": ultima.period_month, "registros": total, "ticket": ponderada,
-        }
 
 
 class CreditorContact(models.Model):
@@ -123,7 +92,17 @@ class CreditorContact(models.Model):
     una columna generada (primary_slot) con indice unico. Esa columna no se
     declara aca a proposito: MySQL la calcula sola y no admite escritura.
     El metodo save() hace cumplir la misma regla antes de llegar a la base.
+
+    **La cuenta de la empresa es un contacto con acceso.** Quien se registra en
+    el portal de empresas queda como contacto, con su usuario y el acceso por
+    aprobar; el personal lo aprueba. Un contacto sin cuenta (NULL en los dos
+    campos) es solo alguien a quien llamar.
     """
+
+    class Access(models.TextChoices):
+        PENDING = "pending", "Por aprobar"
+        GRANTED = "granted", "Aprobado"
+        REVOKED = "revoked", "Revocado"
 
     creditor = models.ForeignKey(
         Creditor, on_delete=models.CASCADE, related_name="contacts",
@@ -134,6 +113,13 @@ class CreditorContact(models.Model):
     email = models.EmailField("correo", max_length=254)
     phone = models.CharField("telefono", max_length=20, blank=True, null=True)
     is_primary = models.BooleanField("es contacto principal", default=False)
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="contacto",
+        verbose_name="usuario del portal", db_column="user_id", blank=True, null=True,
+    )
+    portal_access = Categoria(
+        "acceso al portal", max_length=10, choices=Access.choices, blank=True, null=True,
+    )
     created_at = models.DateTimeField("creado", auto_now_add=True)
     updated_at = models.DateTimeField("actualizado", auto_now=True)
 
@@ -151,6 +137,10 @@ class CreditorContact(models.Model):
     def __str__(self):
         return f"{self.full_name} ({self.creditor.trade_name})"
 
+    @property
+    def puede_entrar(self):
+        return self.user_id is not None and self.portal_access == self.Access.GRANTED
+
     def save(self, *args, **kwargs):
         # Marcar este como principal degrada al anterior, en vez de chocar
         # contra el indice unico de la base con un error poco descriptivo.
@@ -162,58 +152,6 @@ class CreditorContact(models.Model):
                 .update(is_primary=False)
             )
         super().save(*args, **kwargs)
-
-
-class PortfolioHandover(models.Model):
-    """
-    Una entrega de cartera: lo que el acreedor pasa a gestion en un mes, para
-    un tramo de mora determinado.
-
-    Se llama "entrega" porque eso es: un traspaso con fecha. No hay deudores
-    individuales aca, solo el agregado comercial de cuantos son y cuanto deben
-    en promedio.
-    """
-
-    class OverdueBracket(models.TextChoices):
-        TEMPRANA = "1-30", "1 a 30 dias"
-        MEDIA = "31-90", "31 a 90 dias"
-        TARDIA = "91-120", "91 a 120 dias"
-
-    creditor = models.ForeignKey(
-        Creditor, on_delete=models.CASCADE, related_name="handovers",
-        verbose_name="acreedor", db_column="creditor_id",
-    )
-    period_month = models.DateField(
-        "mes del periodo", help_text="Siempre el dia 1 del mes."
-    )
-    overdue_bracket = Categoria(
-        "tramo de mora", max_length=20, choices=OverdueBracket.choices
-    )
-    debtor_count = models.PositiveIntegerField("cantidad de deudores", default=0)
-    average_debt_clp = models.DecimalField(
-        "deuda promedio (CLP)", max_digits=12, decimal_places=2, default=0,
-        validators=[MinValueValidator(0)],
-    )
-    received_at = models.DateTimeField("recibida", blank=True, null=True)
-    created_at = models.DateTimeField("creado", auto_now_add=True)
-
-    class Meta:
-        db_table = "crm_portfoliohandover"
-        verbose_name = "entrega de cartera"
-        verbose_name_plural = "entregas de cartera"
-        ordering = ["-period_month", "overdue_bracket"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["creditor", "period_month", "overdue_bracket"],
-                name="uq_handover_slot",
-            )
-        ]
-
-    def __str__(self):
-        return (
-            f"{self.creditor.trade_name} {self.period_month:%Y-%m} "
-            f"{self.overdue_bracket}"
-        )
 
 
 class Campaign(models.Model):
@@ -383,10 +321,6 @@ class Lead(models.Model):
     current_collection_method = Categoria(
         "como cobran hoy", max_length=20,
         choices=CollectionMethod.choices, blank=True, null=True,
-    )
-    industry = models.ForeignKey(
-        Industry, on_delete=models.SET_NULL, related_name="leads",
-        verbose_name="rubro", db_column="industry_id", blank=True, null=True,
     )
     source = Categoria(
         "origen", max_length=20, choices=Source.choices, default=Source.FORM

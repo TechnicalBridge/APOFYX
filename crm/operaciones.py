@@ -79,15 +79,16 @@ class SiSobra(Operation):
     """
     El reverso de {@link SiFalta}: quita algo solo si esta.
 
-    Cuando una restriccion desaparece del DDL —por ejemplo, el CHECK de una
-    categoria que paso a ser ENUM— la migracion que la quita se cae en una
-    base creada con el DDL nuevo, porque ahi nunca existio.
+    Cuando algo desaparece del DDL —el CHECK de una categoria que paso a ser
+    ENUM, una columna o una tabla que ya no se usan— la migracion que lo quita
+    se cae en una base creada con el DDL nuevo, porque ahi nunca existio.
     """
 
     reversible = True
     reduces_to_sql = False
 
-    ACEPTADAS = (migrations.RemoveConstraint, migrations.RemoveIndex)
+    ACEPTADAS = (migrations.RemoveConstraint, migrations.RemoveIndex, migrations.RemoveField,
+                 migrations.DeleteModel)
 
     def __init__(self, operacion):
         if not isinstance(operacion, self.ACEPTADAS):
@@ -101,17 +102,72 @@ class SiSobra(Operation):
         self.operacion.state_forwards(app_label, state)
 
     def database_forwards(self, app_label, schema_editor, from_state, to_state):
-        tabla = from_state.apps.get_model(app_label, self.operacion.model_name)._meta.db_table
-        with schema_editor.connection.cursor() as cursor:
-            existentes = schema_editor.connection.introspection.get_constraints(cursor, tabla)
-        if self.operacion.name in existentes:
+        if self._existe(app_label, schema_editor, from_state):
             self.operacion.database_forwards(app_label, schema_editor, from_state, to_state)
+
+    def _existe(self, app_label, schema_editor, estado):
+        op = self.operacion
+        introspeccion = schema_editor.connection.introspection
+        if isinstance(op, migrations.DeleteModel):
+            return estado.apps.get_model(app_label, op.name)._meta.db_table in introspeccion.table_names()
+
+        modelo = estado.apps.get_model(app_label, op.model_name)
+        tabla = modelo._meta.db_table
+        if tabla not in introspeccion.table_names():
+            return False
+        with schema_editor.connection.cursor() as cursor:
+            if isinstance(op, migrations.RemoveField):
+                columna = modelo._meta.get_field(op.name).column
+                return any(c.name == columna for c in introspeccion.get_table_description(cursor, tabla))
+            return op.name in introspeccion.get_constraints(cursor, tabla)
 
     def database_backwards(self, app_label, schema_editor, from_state, to_state):
         self.operacion.database_backwards(app_label, schema_editor, from_state, to_state)
 
     def describe(self):
         return f"{self.operacion.describe()} (si sobra)"
+
+    @property
+    def migration_name_fragment(self):
+        return self.operacion.migration_name_fragment
+
+
+class SiLaTablaExiste(Operation):
+    """
+    Aplica una operacion sobre una tabla solo si la tabla existe.
+
+    Para las migraciones antiguas que tocan una tabla que el DDL de hoy ya no
+    crea —crm_portfoliohandover, que se fue con la cartera real—: en una base
+    nacida del DDL nuevo no hay nada que alterar. En el estado de Django se
+    aplica siempre, asi los modelos y las migraciones siguen calzando.
+    """
+
+    reversible = True
+    reduces_to_sql = False
+
+    def __init__(self, operacion):
+        self.operacion = operacion
+
+    def deconstruct(self):
+        return (f"{__name__}.{self.__class__.__qualname__}", [self.operacion], {})
+
+    def state_forwards(self, app_label, state):
+        self.operacion.state_forwards(app_label, state)
+
+    def _existe(self, app_label, schema_editor, estado):
+        tabla = estado.apps.get_model(app_label, self.operacion.model_name)._meta.db_table
+        return tabla in schema_editor.connection.introspection.table_names()
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        if self._existe(app_label, schema_editor, from_state):
+            self.operacion.database_forwards(app_label, schema_editor, from_state, to_state)
+
+    def database_backwards(self, app_label, schema_editor, from_state, to_state):
+        if self._existe(app_label, schema_editor, to_state):
+            self.operacion.database_backwards(app_label, schema_editor, from_state, to_state)
+
+    def describe(self):
+        return f"{self.operacion.describe()} (si la tabla existe)"
 
     @property
     def migration_name_fragment(self):

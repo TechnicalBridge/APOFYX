@@ -1,0 +1,42 @@
+{% extends "portal/base_portal.html" %}
+
+{% block titulo_portal %}{% if contacto %}Editar contacto{% else %}Nuevo contacto{% endif %}{% endblock %}
+{% block encabezado %}{% if contacto %}Editar {{ contacto.full_name }}{% else %}Nuevo contacto{% endif %}{% endblock %}
+
+{% block portal %}
+
+<p class="mb-4"><a class="ap-micro" href="{% url 'portal:datos' %}">&larr; Volver a mis datos</a></p>
+
+<div class="row">
+    <div class="col-lg-7">
+        <form method="post" novalidate>
+            {% csrf_token %}
+            <div class="row g-4">
+                {% for campo in form %}
+                {% if campo.name == 'is_primary' %}
+                <div class="col-12">
+                    <div class="form-check">
+                        {{ campo }}
+                        <label class="form-check-label ap-nota" for="{{ campo.id_for_label }}">{{ campo.label|capfirst }}</label>
+                    </div>
+                </div>
+                {% else %}
+                <div class="col-md-6">
+                    <label class="form-label" for="{{ campo.id_for_label }}">
+                        {{ campo.label|capfirst }}{% if campo.field.required %} <span style="color: var(--ap-oro)">*</span>{% endif %}
+                    </label>
+                    {{ campo }}
+                    {% for error in campo.errors %}<div class="ap-error mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                {% endif %}
+                {% endfor %}
+                <div class="col-12 pt-3 d-flex flex-wrap gap-3">
+                    <button class="btn btn-ap" type="submit">Guardar</button>
+                    <a class="btn btn-ap-linea" href="{% url 'portal:datos' %}">Cancelar</a>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% endblock %}
