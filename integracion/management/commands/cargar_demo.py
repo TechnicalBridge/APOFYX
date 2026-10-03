@@ -1,18 +1,21 @@
 """
-Carga la historia de la demo: la cartera de Patrimonio Inmuebles, con cada
-deudor en una situacion distinta.
+Carga la historia de la demo: la cartera de tres clientes de rubros distintos,
+con cada deudor en una situacion distinta.
 
     python manage.py cargar_demo
     python manage.py cargar_demo --reemplazar
 
-Es la misma historia que cuentan los datos de ejemplo de Patrimonio y de
-DataBridge, vista desde APOFYX. Patrimonio entrego dos carteras, la del corte
-del 18 de agosto y la del 18 de septiembre. APOFYX las recibio, se las paso a
-DataBridge el dia en que empezaba la campana de cada mes, y DataBridge le fue
-avisando lo que hacia cada deudor:
+Es la misma historia que cuentan los datos de ejemplo de DataBridge (y, para
+Patrimonio, los suyos), vista desde APOFYX. DataBridge cobra desde 30 dias de
+mora: a la deuda con menos la rechaza, y APOFYX la gestiona por su cuenta.
+
+Patrimonio Inmuebles (arriendos) entrego dos carteras, la del corte del 18 de
+agosto y la del 18 de septiembre. APOFYX las recibio, se las paso a DataBridge
+el dia en que empezaba la campana de cada mes, y DataBridge le fue avisando lo
+que hacia cada deudor:
 
     Felipe          acepto 6 cuotas y lleva 3 pagadas            en convenio
-    Valentina       debe un mes: DataBridge no la tomo           en gestion
+    Valentina       debe 13 dias: DataBridge no la tomo          en gestion
     Comercial Nandu debe tres meses en UF                        en gestion
     Tomas           pago en la oficina y Patrimonio lo retiro    retirada
     Rodrigo         debe cuatro meses                            en gestion
@@ -21,13 +24,24 @@ avisando lo que hacia cada deudor:
     Ignacio         dejo el depto, acepto 6 cuotas y no pago     en convenio
     Daniela         acepto 3 cuotas y las pago juntas            pagada
 
+Instituto Andes (aranceles) subio su planilla al portal con el corte del 18 de
+septiembre, y Clinica Dental Sonrisa Norte (tratamientos de un solo cargo)
+entrego la suya por API:
+
+    Benjamin        debe tres aranceles                          en gestion
+    Antonia         debe 8 dias: DataBridge no la tomo           en gestion
+    Josefina        pago sus dos aranceles con Webpay            pagada
+    Patricio        debe una ortodoncia de julio                 en gestion
+    Fernanda        acepto 6 cuotas por un implante y pago una   en convenio
+
 Todo pasa por el mismo codigo que una cartera de verdad: recibir_cartera valida
 y guarda, recibir_evento pone al dia cada estado. La unica diferencia es que no
-se reenvia nada, ni a DataBridge ni a Patrimonio: es historia, ya ocurrio.
+se reenvia nada, ni a DataBridge ni al cliente: es historia, ya ocurrio.
 
-Solo se carga si Patrimonio no tiene cartera en APOFYX. Si ya tiene una (la de
-una corrida de la cadena completa, por ejemplo), no se toca, salvo con
---reemplazar.
+Cada cliente se carga solo si no tiene cartera en APOFYX. Si ya tiene una (la
+de una corrida de la cadena completa, por ejemplo), no se toca, salvo con
+--reemplazar. Patrimonio tiene que estar entre los clientes; Instituto Andes y
+Sonrisa Norte vienen en sql/AphofyxDB.sql, y si faltan, su parte se omite.
 """
 
 import uuid
@@ -47,6 +61,8 @@ from ...intake import huella, recibir_cartera
 from ...models import Forward, InboundEvent, OutboundEvent
 
 RUT_PATRIMONIO = "76418902-7"
+RUT_ANDES = "77812341-K"
+RUT_SONRISA = "76998877-7"
 CHILE = ZoneInfo("America/Santiago")
 
 
@@ -161,9 +177,13 @@ SEPTIEMBRE = _cartera("PAT-2026-09-18-01", "2026-09-18", "2026-09-18T13:05:00.00
 LOTE_AGOSTO = "APX-2026-08-19-003"
 LOTE_SEPTIEMBRE = "APX-2026-09-19-004"
 
-#  DataBridge cobra desde dos meses impagos: con uno, la deuda se rechaza sola.
-UN_MES = [{"campo": "cargos", "codigo": "bajo_umbral_mora",
-           "mensaje": "Tiene 1 mes impago: DataBridge recibe deudas desde 2 meses impagos"}]
+def _poca_mora(dias):
+    """DataBridge cobra desde 30 dias de mora: con menos, la deuda se rechaza sola."""
+    return [{"campo": "cargos", "codigo": "bajo_umbral_mora",
+             "mensaje": f"Tiene {dias} dias de mora: DataBridge recibe deudas desde 30 dias de mora"}]
+
+
+UN_MES = _poca_mora(13)
 
 
 def _entro(contrato, resultado, mora):
@@ -203,7 +223,7 @@ RESPUESTA_SEPTIEMBRE = _respuesta(LOTE_SEPTIEMBRE, [
 ])
 
 
-def _evento(cuando, tipo, lote, **datos):
+def _evento(cuando, tipo, lote, rut=RUT_PATRIMONIO, **datos):
     """
     Un evento como lo arma DataBridge. El id sale de su contenido, asi que es
     siempre el mismo y la deduplicacion de recibir_evento sirve tambien aca.
@@ -215,33 +235,34 @@ def _evento(cuando, tipo, lote, **datos):
         "tipo": tipo,
         "version": "1",
         "ocurrido_en": ocurrido,
-        "acreedor_rut": RUT_PATRIMONIO,
+        "acreedor_rut": rut,
         "lote_id_externo": lote,
         "datos": datos,
     }
 
 
-def _convenio(cuando, lote, contrato, cuotas, monto, moneda, primera):
-    return _evento(cuando, "repactacion.aceptada", lote, deuda_id_externo=contrato, cuotas=cuotas,
+def _convenio(cuando, lote, contrato, cuotas, monto, moneda, primera, rut=RUT_PATRIMONIO):
+    return _evento(cuando, "repactacion.aceptada", lote, rut, deuda_id_externo=contrato, cuotas=cuotas,
                    monto_cuota=monto, moneda=moneda, primera_cuota=primera)
 
 
-def _pago(cuando, contrato, pago_id, monto, medio, moneda="CLP", monto_clp=None, valor_uf=None):
+def _pago(cuando, contrato, pago_id, monto, medio, moneda="CLP", monto_clp=None, valor_uf=None,
+          lote=LOTE_SEPTIEMBRE, rut=RUT_PATRIMONIO):
     datos = {"deuda_id_externo": contrato, "pago_id": pago_id, "monto": monto, "moneda": moneda,
              "monto_clp": monto if monto_clp is None else monto_clp}
     if valor_uf is not None:
         datos["valor_uf"] = valor_uf
     datos.update(medio=medio, pagado_en=_hora(cuando).isoformat())
-    return _evento(cuando, "pago.confirmado", LOTE_SEPTIEMBRE, **datos)
+    return _evento(cuando, "pago.confirmado", lote, rut, **datos)
 
 
-def _saldada(cuando, contrato):
-    return _evento(cuando, "deuda.saldada", LOTE_SEPTIEMBRE, deuda_id_externo=contrato,
+def _saldada(cuando, contrato, lote=LOTE_SEPTIEMBRE, rut=RUT_PATRIMONIO):
+    return _evento(cuando, "deuda.saldada", lote, rut, deuda_id_externo=contrato,
                    saldada_en=_hora(cuando).isoformat())
 
 
-def _procesado(cuando, lote, corte, respuesta, tramos):
-    return _evento(cuando, "lote.procesado", lote, periodo=corte[:7], fecha_corte=corte,
+def _procesado(cuando, lote, corte, respuesta, tramos, rut=RUT_PATRIMONIO):
+    return _evento(cuando, "lote.procesado", lote, rut, periodo=corte[:7], fecha_corte=corte,
                    recibidas=respuesta["recibidas"], aceptadas=respuesta["aceptadas"],
                    rechazadas=respuesta["rechazadas"], tramos=tramos)
 
@@ -254,10 +275,11 @@ CAMPANA_AGOSTO = "Patrimonio - Arriendos - Agosto 2026"
 CAMPANA_SEPTIEMBRE = "Patrimonio - Arriendos - Septiembre 2026"
 
 class Entrega(NamedTuple):
-    """Patrimonio entrega una cartera. APOFYX la recibe y anota el reenvio."""
+    """El cliente entrega una cartera. APOFYX la recibe y anota el reenvio."""
     cuando: str
     cartera: dict
     lote_en_databridge: str
+    origen: str = Batch.Source.API
 
 
 class Reenvio(NamedTuple):
@@ -297,53 +319,200 @@ HISTORIA = [
     _saldada("2026-09-24 21:05", "CTR-2026-015"),
 ]
 
+
+# ---------------------------------------------------------------------------
+#  Instituto Andes: aranceles mensuales, por la planilla del portal
+# ---------------------------------------------------------------------------
+
+def _estudiante(matricula, deudor, carrera, aranceles):
+    return {
+        "id_externo": matricula,
+        "deudor": deudor,
+        "moneda": "CLP",
+        "concepto": f"Arancel {carrera}",
+        "referencias": {"matricula": matricula, "carrera": carrera},
+        "cargos": [
+            {"concepto": f"Arancel {MESES[mes]}", "periodo": mes, "monto": 185000,
+             "fecha_vencimiento": f"{mes}-10"}
+            for mes in aranceles
+        ],
+    }
+
+
+BENJAMIN = {"rut": "21345678-4", "tipo": "persona", "nombre": "Benjamín Araya Toro",
+            "correo": "benjamin.araya@correo.cl", "telefono": "+56944120387"}
+ANTONIA = {"rut": "21987654-8", "tipo": "persona", "nombre": "Antonia Reyes Lagos",
+           "correo": "antonia.reyes@correo.cl", "telefono": "+56930218865"}
+JOSEFINA = {"rut": "20876543-4", "tipo": "persona", "nombre": "Josefina Vidal Cortés",
+            "correo": "josefina.vidal@correo.cl", "telefono": "+56977345120"}
+
+#  El portal arma el numero del lote con la fecha de corte.
+ANDES_SEPTIEMBRE = {
+    "version": "1.0",
+    "lote": {"id_externo": "CSV-2026-09-18-1", "fecha_corte": "2026-09-18",
+             "acreedor": {"rut": RUT_ANDES, "razon_social": "Instituto Profesional Andes Ltda.",
+                          "nombre_fantasia": "Instituto Andes"}},
+    "deudas": [
+        _estudiante("AND-2025-0412", BENJAMIN, "Técnico en Enfermería", ["2026-07", "2026-08", "2026-09"]),
+        _estudiante("AND-2026-0087", ANTONIA, "Técnico en Párvulos", ["2026-09"]),
+        _estudiante("AND-2024-0931", JOSEFINA, "Ingeniería en Informática", ["2026-08", "2026-09"]),
+    ],
+}
+LOTE_ANDES = "APX-2026-09-19-005"
+CAMPANA_ANDES = "Andes - Aranceles - Septiembre 2026"
+RESPUESTA_ANDES = _respuesta(LOTE_ANDES, [
+    _entro("AND-2025-0412", "registrada", 70),
+    {"id_externo": "AND-2026-0087", "resultado": "rechazada", "errores": _poca_mora(8)},
+    _entro("AND-2024-0931", "registrada", 39),
+])
+
+HISTORIA_ANDES = [
+    Entrega("2026-09-18 11:20:04", ANDES_SEPTIEMBRE, LOTE_ANDES, Batch.Source.FILE),
+    Reenvio("2026-09-19 10:20:00", ANDES_SEPTIEMBRE, CAMPANA_ANDES, RESPUESTA_ANDES),
+    _procesado("2026-09-19 10:20", LOTE_ANDES, "2026-09-18", RESPUESTA_ANDES,
+               [{"tramo": "31-90", "deudas": 2, "promedio_clp": 462500}], rut=RUT_ANDES),
+    _pago("2026-09-22 20:10", "AND-2024-0931", "121", 370000, "webpay", lote=LOTE_ANDES, rut=RUT_ANDES),
+    _saldada("2026-09-22 20:10", "AND-2024-0931", lote=LOTE_ANDES, rut=RUT_ANDES),
+]
+
+
+# ---------------------------------------------------------------------------
+#  Sonrisa Norte: tratamientos dentales de un solo cargo, por API
+# ---------------------------------------------------------------------------
+
+def _tratamiento(presupuesto, deudor, tratamiento, cargo, monto, vence):
+    return {
+        "id_externo": presupuesto,
+        "deudor": deudor,
+        "moneda": "CLP",
+        "concepto": tratamiento,
+        "referencias": {"presupuesto": presupuesto, "tratamiento": tratamiento},
+        "cargos": [{"concepto": cargo, "monto": monto, "fecha_vencimiento": vence}],
+    }
+
+
+PATRICIO = {"rut": "13579246-2", "tipo": "persona", "nombre": "Patricio Muñoz Salas",
+            "correo": "patricio.munoz@correo.cl", "telefono": "+56951287734"}
+FERNANDA = {"rut": "16789012-1", "tipo": "persona", "nombre": "Fernanda Silva Rojas",
+            "correo": "fernanda.silva@correo.cl", "telefono": "+56962054418"}
+
+SONRISA_SEPTIEMBRE = {
+    "version": "1.0",
+    "lote": {"id_externo": "SN-2026-09-18", "fecha_corte": "2026-09-18",
+             "acreedor": {"rut": RUT_SONRISA, "razon_social": "Servicios Dentales Sonrisa Norte SpA",
+                          "nombre_fantasia": "Clínica Dental Sonrisa Norte"}},
+    "deudas": [
+        _tratamiento("SN-2026-118", PATRICIO, "Tratamiento de ortodoncia", "Ortodoncia, saldo del presupuesto",
+                     890000, "2026-07-05"),
+        _tratamiento("SN-2026-093", FERNANDA, "Implante dental", "Implante dental", 1450000, "2026-06-20"),
+    ],
+}
+LOTE_SONRISA = "APX-2026-09-19-006"
+CAMPANA_SONRISA = "Sonrisa Norte - Tratamientos - Septiembre 2026"
+#  Dos deudas de un solo cargo: con la regla de meses impagos se habrian rechazado.
+RESPUESTA_SONRISA = _respuesta(LOTE_SONRISA, [
+    _entro("SN-2026-118", "registrada", 75),
+    _entro("SN-2026-093", "registrada", 90),
+])
+
+HISTORIA_SONRISA = [
+    Entrega("2026-09-18 16:40:11", SONRISA_SEPTIEMBRE, LOTE_SONRISA),
+    Reenvio("2026-09-19 10:25:00", SONRISA_SEPTIEMBRE, CAMPANA_SONRISA, RESPUESTA_SONRISA),
+    _procesado("2026-09-19 10:25", LOTE_SONRISA, "2026-09-18", RESPUESTA_SONRISA,
+               [{"tramo": "31-90", "deudas": 2, "promedio_clp": 1170000}], rut=RUT_SONRISA),
+    _convenio("2026-09-21 11:00", LOTE_SONRISA, "SN-2026-093", 6, 241666, "CLP", "2026-10-21", rut=RUT_SONRISA),
+    _pago("2026-09-21 11:05", "SN-2026-093", "117", 241666, "khipu", lote=LOTE_SONRISA, rut=RUT_SONRISA),
+]
+
+
+# ---------------------------------------------------------------------------
+#  Los tres clientes de la demo
+# ---------------------------------------------------------------------------
+
+class Demo(NamedTuple):
+    rut: str
+    nombre: str
+    historia: list
+    #  Las campanas que usa la historia, por si la base no las trae.
+    campanas: dict
+    #  Sin Patrimonio no hay demo; sin los otros, solo falta su parte.
+    obligatoria: bool = False
+
+    @property
+    def entregas(self):
+        return [paso.cartera for paso in self.historia if isinstance(paso, Entrega)]
+
+
+DEMOS = [
+    Demo(RUT_PATRIMONIO, "Patrimonio Inmuebles", HISTORIA, {
+        CAMPANA_AGOSTO: {"starts_on": date(2026, 8, 19), "ends_on": date(2026, 9, 18),
+                         "status": Campaign.Status.FINISHED, "channels": ["whatsapp", "email"],
+                         "contact_attempts": 5},
+        CAMPANA_SEPTIEMBRE: {"starts_on": date(2026, 9, 19), "status": Campaign.Status.RUNNING,
+                             "channels": ["whatsapp", "email"], "contact_attempts": 5},
+    }, obligatoria=True),
+    Demo(RUT_ANDES, "Instituto Andes", HISTORIA_ANDES, {
+        CAMPANA_ANDES: {"starts_on": date(2026, 9, 19), "status": Campaign.Status.RUNNING,
+                        "channels": ["whatsapp", "email"], "contact_attempts": 3},
+    }),
+    Demo(RUT_SONRISA, "Sonrisa Norte", HISTORIA_SONRISA, {
+        CAMPANA_SONRISA: {"starts_on": date(2026, 9, 4), "status": Campaign.Status.RUNNING,
+                          "channels": ["whatsapp", "sms"], "contact_attempts": 3},
+    }),
+]
+
 #  Lo que tarda un aviso de DataBridge en llegar: su bandeja sale cada pocos segundos.
 DEMORA_DEL_AVISO = timedelta(seconds=4)
 
 
 class Command(BaseCommand):
-    help = "Carga la cartera de Patrimonio de la demo, con cada deudor en una situacion distinta."
+    help = "Carga la cartera de la demo: tres clientes de rubros distintos, cada deudor en otra situacion."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--reemplazar", action="store_true",
-            help="Borra la cartera que Patrimonio tenga en APOFYX (entregas, deudas, reenvios y "
-                 "eventos) y carga la de la demo en su lugar.",
+            help="Borra la cartera que los clientes de la demo tengan en APOFYX (entregas, deudas, "
+                 "reenvios y eventos) y carga la de la demo en su lugar.",
         )
 
     def handle(self, *args, **opciones):
-        acreedor = Creditor.objects.filter(tax_id=RUT_PATRIMONIO).first()
-        if acreedor is None:
+        patrimonio = DEMOS[0]
+        if not Creditor.objects.filter(tax_id=patrimonio.rut).exists():
             raise CommandError(
                 f"Patrimonio Inmuebles ({RUT_PATRIMONIO}) no esta entre los clientes. Viene en "
                 "sql/AphofyxDB.sql; en una base anterior, corre "
                 "sql/migraciones/2026-09-19-patrimonio-como-acreedor.sql"
             )
 
-        with transaction.atomic():
-            entregas = Batch.objects.filter(creditor=acreedor)
-            if entregas.exists():
-                if not opciones["reemplazar"]:
-                    self._no_se_toca(entregas)
-                    return
-                self._borrar(acreedor)
-            self._cargar(acreedor)
-        self._resumen(acreedor)
+        for demo in DEMOS:
+            acreedor = Creditor.objects.filter(tax_id=demo.rut).first()
+            if acreedor is None:
+                self.stdout.write(f"{demo.nombre} ({demo.rut}) no esta entre los clientes: su parte se omite.")
+                continue
+            with transaction.atomic():
+                entregas = Batch.objects.filter(creditor=acreedor)
+                if entregas.exists():
+                    if not opciones["reemplazar"]:
+                        self._no_se_toca(demo, entregas)
+                        continue
+                    self._borrar(demo, acreedor)
+                self._cargar(demo, acreedor)
+            self._resumen(demo, acreedor)
 
     # ------------------------------------------------------------------
 
-    def _no_se_toca(self, entregas):
-        demo = {AGOSTO["lote"]["id_externo"]: huella(AGOSTO), SEPTIEMBRE["lote"]["id_externo"]: huella(SEPTIEMBRE)}
-        if dict(entregas.values_list("external_id", "payload_hash")) == demo:
-            self.stdout.write("La demo ya estaba cargada.")
+    def _no_se_toca(self, demo, entregas):
+        suyas = {cartera["lote"]["id_externo"]: huella(cartera) for cartera in demo.entregas}
+        if dict(entregas.values_list("external_id", "payload_hash")) == suyas:
+            self.stdout.write(f"La demo de {demo.nombre} ya estaba cargada.")
             return
         self.stdout.write(
-            f"Patrimonio ya tiene cartera en APOFYX ({entregas.count()} entrega(s)) y no se toca.\n"
+            f"{demo.nombre} ya tiene cartera en APOFYX ({entregas.count()} entrega(s)) y no se toca.\n"
             "Para cambiarla por la de la demo: python manage.py cargar_demo --reemplazar"
         )
 
-    def _borrar(self, acreedor):
-        """Todo lo de la cartera de Patrimonio. Lo demas del cliente (campanas, claves) queda."""
+    def _borrar(self, demo, acreedor):
+        """Todo lo de la cartera del cliente. Lo demas (campanas, claves, cuentas) queda."""
         deudas = Debt.objects.filter(creditor=acreedor)
         deudores = list(deudas.values_list("debtor_id", flat=True))
         OutboundEvent.objects.filter(subscription__creditor=acreedor).delete()
@@ -355,16 +524,16 @@ class Command(BaseCommand):
         #  Un deudor es uno solo aunque le deba a varios clientes: se va solo
         #  si ya no le debe a nadie.
         Debtor.objects.filter(pk__in=deudores, debts__isnull=True).delete()
-        self.stdout.write(f"Borrada la cartera anterior de Patrimonio: {cuantas} deuda(s).")
+        self.stdout.write(f"Borrada la cartera anterior de {demo.nombre}: {cuantas} deuda(s).")
 
-    def _cargar(self, acreedor):
-        for paso in HISTORIA:
+    def _cargar(self, demo, acreedor):
+        for paso in demo.historia:
             desde = timezone.now()
             if isinstance(paso, Entrega):
                 self._recibir(acreedor, paso)
                 cuando = _hora(paso.cuando)
             elif isinstance(paso, Reenvio):
-                self._reenviar(acreedor, paso)
+                self._reenviar(demo, acreedor, paso)
                 cuando = _hora(paso.cuando)
             else:
                 recibir_evento(paso, reenviar=False)
@@ -372,7 +541,7 @@ class Command(BaseCommand):
             _fechar(acreedor, desde, cuando)
 
     def _recibir(self, acreedor, paso):
-        respuesta = recibir_cartera(acreedor, paso.cartera, reenviar=False)
+        respuesta = recibir_cartera(acreedor, paso.cartera, source=paso.origen, reenviar=False)
         if respuesta["rechazadas"]:
             #  Una demo a medias contaria otra historia: mejor no cargarla.
             raise CommandError(f"La cartera {respuesta['lote']} de la demo no entro completa: "
@@ -382,18 +551,18 @@ class Command(BaseCommand):
                                external_id=paso.lote_en_databridge,
                                status=Forward.Status.WAITING_CAMPAIGN)
 
-    def _reenviar(self, acreedor, paso):
+    def _reenviar(self, demo, acreedor, paso):
         entrega = _entrega(acreedor, paso.cartera)
-        entrega.campaign = _campana(acreedor, paso.campana)
+        entrega.campaign = _campana(acreedor, paso.campana, demo.campanas[paso.campana])
         entrega.save(update_fields=["campaign"])
         Forward.objects.filter(batch=entrega).update(
             status=Forward.Status.SENT, sent_at=_hora(paso.cuando), response=paso.respuesta,
         )
 
-    def _resumen(self, acreedor):
+    def _resumen(self, demo, acreedor):
         deudas = Debt.objects.filter(creditor=acreedor).select_related("debtor")
         self.stdout.write(self.style.SUCCESS(
-            f"Cartera de Patrimonio cargada: {Batch.objects.filter(creditor=acreedor).count()} entregas, "
+            f"Cartera de {demo.nombre} cargada: {Batch.objects.filter(creditor=acreedor).count()} entregas, "
             f"{deudas.count()} deudas y "
             f"{InboundEvent.objects.filter(payload__acreedor_rut=acreedor.tax_id).count()} avisos de DataBridge."
         ))
@@ -407,22 +576,12 @@ def _entrega(acreedor, cartera):
     return Batch.objects.get(creditor=acreedor, external_id=cartera["lote"]["id_externo"])
 
 
-def _campana(acreedor, nombre):
+def _campana(acreedor, nombre, como):
     """
-    La campana del mes. La de septiembre viene en sql/AphofyxDB.sql; la de
-    agosto, ya cerrada, la trae la demo.
+    La campana del mes. Algunas vienen en sql/AphofyxDB.sql (la de septiembre
+    de Patrimonio y la de Sonrisa Norte); las demas las trae la demo.
     """
-    agosto = nombre == CAMPANA_AGOSTO
-    campana, _ = Campaign.objects.get_or_create(
-        creditor=acreedor, name=nombre,
-        defaults={
-            "starts_on": date(2026, 8, 19) if agosto else date(2026, 9, 19),
-            "ends_on": date(2026, 9, 18) if agosto else None,
-            "status": Campaign.Status.FINISHED if agosto else Campaign.Status.RUNNING,
-            "channels": ["whatsapp", "email"],
-            "contact_attempts": 5,
-        },
-    )
+    campana, _ = Campaign.objects.get_or_create(creditor=acreedor, name=nombre, defaults=como)
     return campana
 
 

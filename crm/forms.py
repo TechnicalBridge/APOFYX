@@ -250,7 +250,9 @@ class ConexionPlataformaForm(forms.Form):
     """La dirección y la clave que la plataforma de pagos le emitió a APOFYX."""
 
     url = forms.URLField(label="Dirección de la plataforma", max_length=300,
-                         widget=forms.URLInput(attrs={"placeholder": "http://localhost:8080"}))
+                         widget=forms.URLInput(attrs={"placeholder": "http://host.docker.internal:8080"}),
+                         help_text="Tal como la ve APOFYX. Si APOFYX corre en Docker, «localhost» es su propio "
+                                   "contenedor: el equipo es host.docker.internal.")
     api_key = forms.CharField(label="Clave de API", max_length=120,
                               widget=forms.PasswordInput(attrs={"autocomplete": "off"}),
                               help_text="La que la plataforma le emitió a APOFYX. No se vuelve a mostrar.")

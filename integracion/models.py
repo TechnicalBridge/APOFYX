@@ -18,6 +18,7 @@ from datetime import timedelta
 from django.db import models
 
 from crm.campos import Categoria
+from integracion.cifrado import Cifrado
 from django.utils import timezone
 
 
@@ -194,9 +195,9 @@ class Subscription(models.Model):
     firma cada aviso, y el cliente descarta lo que no calce. Es el mismo
     contrato con que DataBridge le avisa a APOFYX, un tramo mas arriba.
 
-    El secreto se guarda en claro porque hay que FIRMAR con el, no
-    compararlo: una huella no sirve para firmar. Por eso no se muestra en el
-    admin despues de emitirlo.
+    El secreto se guarda cifrado (integracion/cifrado.py) y no como huella,
+    porque hay que FIRMAR con el, no compararlo. Tampoco se muestra en el admin
+    despues de emitirlo.
     """
 
     creditor = models.ForeignKey(
@@ -204,7 +205,7 @@ class Subscription(models.Model):
         verbose_name="acreedor", db_column="creditor_id",
     )
     url = models.CharField("URL", max_length=300)
-    secret = models.CharField("secreto", max_length=120)
+    secret = Cifrado("secreto", max_length=255)
     events = models.JSONField("eventos", default=list, blank=True, help_text="Vacio = todos.")
     active = models.BooleanField("activa", default=True)
     created_at = models.DateTimeField("creada", auto_now_add=True)
@@ -343,15 +344,16 @@ class PlatformConnection(models.Model):
     secreto con que la plataforma firma esos avisos se guarda aca, y desde ese
     momento vale, sin reiniciar nada.
 
-    La clave y el secreto se guardan en claro: la clave hay que PRESENTARLA y
-    con el secreto hay que FIRMAR, y una huella no sirve para ninguna de las
-    dos. Por lo mismo, el panel no los vuelve a mostrar.
+    La clave y el secreto se guardan cifrados (integracion/cifrado.py), no como
+    huella: la clave hay que PRESENTARLA y con el secreto hay que verificar, y
+    una huella no sirve para ninguna de las dos. El panel no los vuelve a
+    mostrar.
     """
 
     id = models.PositiveSmallIntegerField(primary_key=True, default=1)
     url = models.CharField("direccion", max_length=300)
-    api_key = models.CharField("clave de API", max_length=120)
-    events_secret = models.CharField("secreto de los avisos", max_length=120, blank=True, null=True)
+    api_key = Cifrado("clave de API", max_length=255)
+    events_secret = Cifrado("secreto de los avisos", max_length=255, blank=True, null=True)
     platform_rut = models.CharField("RUT de la plataforma", max_length=12, blank=True, null=True)
     platform_name = models.CharField("nombre de la plataforma", max_length=120, blank=True, null=True)
     connected_at = models.DateTimeField("conectada", blank=True, null=True)

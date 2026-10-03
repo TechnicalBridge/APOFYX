@@ -11,10 +11,48 @@ Si nunca se conecto desde el panel, vale lo que diga la configuracion
 prefiera variables de entorno sigue funcionando igual.
 """
 
+import os
+from urllib.parse import urlsplit, urlunsplit
+
 from django.conf import settings
 from django.utils import timezone
 
 from .models import PlatformConnection
+
+#  Desde un contenedor, estos nombres son el propio contenedor y no el equipo.
+LOCALES = {"localhost", "127.0.0.1", "::1"}
+
+
+def en_docker():
+    """Si APOFYX corre dentro de un contenedor (Docker deja este archivo)."""
+    return os.path.exists("/.dockerenv")
+
+
+def direccion_de_avisos(request):
+    """
+    Donde le pide APOFYX a la plataforma que le avise los pagos: su propio
+    /api/v1/eventos. Si corre en Docker y el panel se abrio desde localhost, la
+    plataforma no lo encontraria ahi (para ella localhost es ella misma), asi
+    que se propone host.docker.internal, que es el equipo visto desde Docker.
+    """
+    url = request.build_absolute_uri("/api/v1/eventos")
+    partes = urlsplit(url)
+    if en_docker() and partes.hostname in LOCALES:
+        equipo = "host.docker.internal" + (f":{partes.port}" if partes.port else "")
+        return urlunsplit(partes._replace(netloc=equipo))
+    return url
+
+
+def _pista(url):
+    """Lo que hay que corregir cuando la plataforma no responde en localhost."""
+    partes = urlsplit(url)
+    if partes.hostname not in LOCALES:
+        return ""
+    puerto = f":{partes.port}" if partes.port else ""
+    return (f" APOFYX corre en un contenedor, y ahi «{partes.hostname}» es el propio contenedor: "
+            f"usa http://host.docker.internal{puerto}." if en_docker() else
+            f" Si APOFYX corre en Docker, «{partes.hostname}» es el propio contenedor: "
+            f"usa http://host.docker.internal{puerto}.")
 
 
 def plataforma():
@@ -64,7 +102,9 @@ def conectar(url, clave, url_avisos, cliente=None):
     try:
         cuenta = cliente.consultar("/api/v1/cuenta")
     except ErrorDataBridge as error:
-        raise ConexionFallida(f"La plataforma no aceptó la clave: {error}") from error
+        sin_respuesta = str(error).startswith("Sin respuesta")
+        raise ConexionFallida(f"La plataforma no aceptó la clave: {error}."
+                              + (_pista(url) if sin_respuesta else "")) from error
     propio = settings.DATABRIDGE["RUT_AGENCIA"]
     if cuenta.get("rut") != propio:
         raise ConexionFallida(f"Esa clave es de {cuenta.get('nombre') or cuenta.get('rut')}, no de APOFYX ({propio})")

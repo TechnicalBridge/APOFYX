@@ -34,6 +34,11 @@ whitenoise==6.12.0
 # respuesta de fallback guardada en la base de datos.
 google-genai==2.23.0
 
+# --- Cifrado de secretos ---
+# La clave de DataBridge y los secretos de los avisos se guardan cifrados con
+# AES-256-GCM (integracion/cifrado.py).
+cryptography==50.0.2
+
 # --- Desarrollo ---
 # Mide que porcentaje del codigo ejecutan las pruebas:
 #   python -m coverage run --source=crm,assistant,cartera,integracion,config --omit="*/migrations/*,*/tests.py" manage.py test

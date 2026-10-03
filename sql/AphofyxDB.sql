@@ -747,16 +747,17 @@ CREATE TABLE integracion_forward (
 --  integracion_subscription — a donde avisarle a un cliente lo que pasa con su
 --  cartera (contrato 3, eventos de vuelta).
 --
---  secret : con el se FIRMA cada aviso, y por eso se guarda en claro: una
---           huella sirve para comparar, no para firmar. En produccion va
---           cifrado con una llave fuera de la base.
+--  secret : con el se FIRMA cada aviso, y por eso no se guarda como huella
+--           (una huella sirve para comparar, no para firmar). Va cifrado con
+--           AES-256-GCM y una llave fuera de la base (CIFRADO_LLAVE):
+--           'enc:v1:' + base64(iv | etiqueta | cifrado).
 --  events : los tipos que el cliente quiere recibir. Vacio = todos.
 -- -----------------------------------------------------------------------------
 CREATE TABLE integracion_subscription (
     id           BIGINT        NOT NULL AUTO_INCREMENT,
     creditor_id  BIGINT        NOT NULL,
     url          VARCHAR(300)  NOT NULL,
-    secret       VARCHAR(120)  NOT NULL,
+    secret       VARCHAR(255)  NOT NULL,
     events       JSON          NOT NULL,
     active       BOOL          NOT NULL DEFAULT TRUE,
     created_at   DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -840,14 +841,15 @@ CREATE TABLE integracion_outboundevent (
 --  (GET /api/v1/cuenta), se suscribe a sus avisos y se guarda el secreto con
 --  que los firma. Reemplaza a las variables de entorno DATABRIDGE_*.
 --
---  api_key y events_secret van en claro: la clave hay que presentarla y con el
---  secreto hay que firmar, y una huella no sirve para ninguna de las dos.
+--  api_key y events_secret van cifrados como integracion_subscription.secret:
+--  la clave hay que presentarla y con el secreto hay que verificar, y una
+--  huella no sirve para ninguna de las dos.
 -- -----------------------------------------------------------------------------
 CREATE TABLE integracion_platformconnection (
     id             SMALLINT UNSIGNED NOT NULL DEFAULT 1,
     url            VARCHAR(300)      NOT NULL,
-    api_key        VARCHAR(120)      NOT NULL,
-    events_secret  VARCHAR(120)          NULL,
+    api_key        VARCHAR(255)      NOT NULL,
+    events_secret  VARCHAR(255)          NULL,
     platform_rut   VARCHAR(12)           NULL,
     platform_name  VARCHAR(120)          NULL,
     connected_at   DATETIME(6)           NULL,

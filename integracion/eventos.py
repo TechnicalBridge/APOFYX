@@ -56,9 +56,13 @@ ESTADO_POR_EVENTO = {
 # vuelve atras porque despues llegue un aviso de repactacion que ocurrio antes.
 FINALES = {Debt.Status.PAID, Debt.Status.WITHDRAWN}
 
+#  La disputa resuelta a favor del cobro: la deuda vuelve a gestion, o a su
+#  convenio si tenia uno. Solo desde "disputada": no reabre lo pagado.
+REANUDADA = "deuda.reanudada"
+
 #  Los avisos a los que se puede suscribir un cliente: los que cambian el estado
 #  de una deuda, y el del pago, que no lo cambia pero el cliente lo necesita.
-TIPOS = sorted({*ESTADO_POR_EVENTO, "pago.confirmado"})
+TIPOS = sorted({*ESTADO_POR_EVENTO, REANUDADA, "pago.confirmado"})
 
 
 class EventoInvalido(Exception):
@@ -160,7 +164,12 @@ def _aplicar(tipo, deuda, acreedor, datos):
     if deuda is None:
         return "deuda desconocida"
 
-    nuevo = ESTADO_POR_EVENTO.get(tipo)
+    if tipo == REANUDADA:
+        if deuda.status != Debt.Status.DISPUTED:
+            return f"se mantiene {deuda.get_status_display().lower()}"
+        nuevo = Debt.Status.REPACTED if datos.get("con_convenio") else Debt.Status.OPEN
+    else:
+        nuevo = ESTADO_POR_EVENTO.get(tipo)
     if nuevo is None:
         return "pago anotado" if tipo == "pago.confirmado" else "anotado"
     if deuda.status == nuevo:

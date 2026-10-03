@@ -15,6 +15,26 @@
 #  Conexion desde MySQL Workbench:  127.0.0.1 : 3307
 # =============================================================================
 
+#  Lo que necesita cualquier proceso de Django: la base, la llave de firma y la
+#  de cifrado.
+#  Lo comparten la aplicacion y el despachador.
+x-django: &django
+  # Dentro de la red de compose el host de la base es "db" y el puerto 3306,
+  # no el 3307 que se publica hacia afuera.
+  DB_HOST:     db
+  DB_PORT:     3306
+  DB_NAME:     ${MYSQL_DATABASE:-apofyx}
+  DB_USER:     ${MYSQL_USER:-apofyx_app}
+  DB_PASSWORD: ${MYSQL_PASSWORD:-apofyx_pass}
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-inseguro-cambiar}
+  # Cifra en la base la clave de DataBridge y los secretos de los avisos.
+  CIFRADO_LLAVE: ${CIFRADO_LLAVE:-apofyx-cifrado-dev-cambiar}
+  # Variable propia, y no DJANGO_DEBUG: el .env de desarrollo dice 1 y
+  # compose lo lee solo, asi que el contenedor terminaba mostrando la
+  # traza completa en cada error. Aca manda el 0 salvo que se pida otra
+  # cosa explicitamente.
+  DJANGO_DEBUG:      ${DJANGO_DEBUG_DOCKER:-0}
+
 services:
 
   db:
@@ -69,19 +89,7 @@ services:
     restart: unless-stopped
 
     environment:
-      # Dentro de la red de compose el host de la base es "db" y el puerto 3306,
-      # no el 3307 que se publica hacia afuera.
-      DB_HOST:     db
-      DB_PORT:     3306
-      DB_NAME:     ${MYSQL_DATABASE:-apofyx}
-      DB_USER:     ${MYSQL_USER:-apofyx_app}
-      DB_PASSWORD: ${MYSQL_PASSWORD:-apofyx_pass}
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-inseguro-cambiar}
-      # Variable propia, y no DJANGO_DEBUG: el .env de desarrollo dice 1 y
-      # compose lo lee solo, asi que el contenedor terminaba mostrando la
-      # traza completa en cada error. Aca manda el 0 salvo que se pida otra
-      # cosa explicitamente.
-      DJANGO_DEBUG:      ${DJANGO_DEBUG_DOCKER:-0}
+      <<: *django
       GEMINI_API_KEY:    ${GEMINI_API_KEY:-}
       # Si estan, el arranque crea el superusuario del panel. Si no, no.
       DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME:-admin}
@@ -113,6 +121,29 @@ services:
 
     depends_on:
       db:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  #  Los reintentos.
+  #  La cartera y los avisos salen apenas llegan; si DataBridge o el cliente
+  #  estaban caidos, quedan en su bandeja de salida. Este proceso las revisa
+  #  cada minuto y reintenta con espera creciente (1 min, 5, 30, 2 h, 6 h, 24 h).
+  #  Misma imagen que la aplicacion; espera a que este sana, que es cuando las
+  #  migraciones ya corrieron.
+  # ---------------------------------------------------------------------------
+  despachador:
+    profiles: ["app"]
+    image: apofyx/web:1.0.0
+    container_name: apofyx-despachador
+    restart: unless-stopped
+    entrypoint: ["python", "manage.py", "despachar_reenvios", "--cada", "60"]
+    environment:
+      <<: *django
+    deploy:
+      resources:
+        limits: { memory: 256M }
+    depends_on:
+      web:
         condition: service_healthy
 
 volumes:

@@ -26,7 +26,7 @@ from django.views.decorators.http import require_POST
 from assistant.models import Conversation, Message
 from cartera.models import Batch, Debt, DebtCharge
 from integracion.models import Forward
-from integracion.plataforma import ConexionFallida, conectar, conexion, desconectar
+from integracion.plataforma import ConexionFallida, conectar, conexion, desconectar, direccion_de_avisos
 from .forms import CampanaForm, ConexionPlataformaForm, CreditorContactForm, CreditorForm
 from .models import (
     Campaign, CampaignFunnelSnapshot, Creditor, CreditorContact, Lead,
@@ -537,7 +537,7 @@ def plataforma(request):
         messages.success(request, "APOFYX quedó desconectada de la plataforma de pagos.")
         return redirect("panel:plataforma")
 
-    inicial = {"url_avisos": request.build_absolute_uri("/api/v1/eventos")}
+    inicial = {"url_avisos": direccion_de_avisos(request)}
     if actual is not None:
         inicial["url"] = actual.url
     form = ConexionPlataformaForm(request.POST or None, initial=inicial)

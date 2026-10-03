@@ -222,3 +222,8 @@ DATABRIDGE = {
     # DataBridge al suscribirse, que se hace al conectar desde el panel.
     "SECRETO_EVENTOS": env("DATABRIDGE_SECRETO_EVENTOS", ""),
 }
+
+# Cifra en la base la clave de DataBridge y los secretos de los avisos
+# (integracion/cifrado.py). No se guarda en la base: quien se lleve un respaldo
+# no se lleva los secretos. Si se cambia, hay que volver a conectar.
+CIFRADO_LLAVE = env("CIFRADO_LLAVE", "apofyx-cifrado-dev-cambiar")

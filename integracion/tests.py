@@ -1051,12 +1051,13 @@ class LaDemoNoPisaUnaCarteraReal(TestCase):
         self.assertIn("--reemplazar", salida)
         self.assertEqual(Batch.objects.get().payload_hash, huella(cartera_de_ejemplo()))
 
-    def test_reemplazar_borra_solo_lo_de_patrimonio(self):
+    def test_reemplazar_borra_solo_lo_de_la_demo(self):
         recibir_cartera(self.acreedor, cartera_de_ejemplo())
-        otro = crear_acreedor("77812341-K", "Otro Acreedor")
+        #  NetSur es cliente de APOFYX pero no esta en la demo: lo suyo no se toca.
+        otro = crear_acreedor("78123456-7", "NetSur ISP")
         suya = cartera_de_ejemplo()
         suya["lote"]["id_externo"] = "OTRO-2026-09-01"
-        suya["lote"]["acreedor"]["rut"] = "77812341-K"
+        suya["lote"]["acreedor"]["rut"] = "78123456-7"
         suya["deudas"] = [suya["deudas"][0]]      # Felipe tambien le debe a otro
         recibir_cartera(otro, suya)
 
@@ -1071,6 +1072,62 @@ class LaDemoNoPisaUnaCarteraReal(TestCase):
         self.acreedor.delete()
         with self.assertRaises(CommandError):
             cargar_demo()
+
+    def test_sin_los_otros_clientes_su_parte_se_omite(self):
+        salida = cargar_demo()
+
+        self.assertIn("Instituto Andes (77812341-K) no esta entre los clientes", salida)
+        self.assertEqual(Batch.objects.count(), 2)
+
+
+class LaDemoTraeOtrosRubros(TestCase):
+    """
+    DataBridge no es de un rubro: la demo trae tambien aranceles (Instituto
+    Andes, por planilla) y tratamientos dentales de un solo cargo (Sonrisa
+    Norte, por API).
+    """
+
+    def setUp(self):
+        crear_acreedor()
+        self.andes = crear_acreedor("77812341-K", "Instituto Andes")
+        self.sonrisa = crear_acreedor("76998877-7", "Clínica Dental Sonrisa Norte")
+        cargar_demo()
+
+    def test_cada_deudor_queda_en_su_situacion(self):
+        self.assertEqual(dict(Debt.objects.filter(creditor__in=[self.andes, self.sonrisa])
+                              .values_list("external_id", "status")), {
+            "AND-2025-0412": Debt.Status.OPEN,       # Benjamin debe tres aranceles
+            "AND-2026-0087": Debt.Status.OPEN,       # Antonia: 8 dias, DataBridge no la tomo
+            "AND-2024-0931": Debt.Status.PAID,       # Josefina pago con Webpay
+            "SN-2026-118": Debt.Status.OPEN,         # Patricio, la ortodoncia
+            "SN-2026-093": Debt.Status.REPACTED,     # Fernanda, 6 cuotas por un implante
+        })
+
+    def test_la_planilla_del_instituto_entro_como_archivo(self):
+        entrega = Batch.objects.get(creditor=self.andes)
+        self.assertEqual((entrega.external_id, entrega.source), ("CSV-2026-09-18-1", Batch.Source.FILE))
+        rechazo = entrega.forward.response["resultados"][1]
+        self.assertEqual(rechazo["id_externo"], "AND-2026-0087")
+        self.assertEqual(rechazo["errores"][0]["mensaje"],
+                         "Tiene 8 dias de mora: DataBridge recibe deudas desde 30 dias de mora")
+
+    def test_las_deudas_de_un_solo_cargo_entraron_a_databridge(self):
+        entrega = Batch.objects.get(creditor=self.sonrisa)
+        self.assertEqual((entrega.forward.response["aceptadas"], entrega.forward.response["rechazadas"]), (2, 0))
+        self.assertEqual([r["mora_dias"] for r in entrega.forward.response["resultados"]], [75, 90])
+        ortodoncia = Debt.objects.get(external_id="SN-2026-118")
+        self.assertEqual((ortodoncia.charges.count(), ortodoncia.saldo), (1, Decimal("890000")))
+
+    def test_cada_entrega_salio_en_la_campana_de_su_cliente(self):
+        campanas = {f.batch.creditor_id: f.batch.campaign.name for f in Forward.objects.select_related("batch__campaign")}
+        self.assertEqual(campanas[self.andes.pk], "Andes - Aranceles - Septiembre 2026")
+        self.assertEqual(campanas[self.sonrisa.pk], "Sonrisa Norte - Tratamientos - Septiembre 2026")
+
+    def test_cargarla_otra_vez_no_cambia_nada(self):
+        salida = cargar_demo()
+        self.assertIn("La demo de Instituto Andes ya estaba cargada", salida)
+        self.assertIn("La demo de Sonrisa Norte ya estaba cargada", salida)
+        self.assertEqual(Batch.objects.count(), 4)
 
 
 # ==========================================================================
@@ -1356,7 +1413,10 @@ class LaPlanillaEsElMismoContrato(TestCase):
                      / "ejemplos" / "cartera-v1.plantilla.csv")
         if not publicada.exists():
             self.skipTest("El repositorio de DataBridge no esta al lado")
-        self.assertEqual(PLANTILLA.read_bytes(), publicada.read_bytes())
+        #  Git en Windows deja cada copia con CRLF o LF segun como se saco; lo
+        #  que tiene que calzar es el contenido.
+        self.assertEqual(PLANTILLA.read_bytes().replace(b"\r\n", b"\n"),
+                         publicada.read_bytes().replace(b"\r\n", b"\n"))
 
     def test_una_fila_sin_cargo_es_un_cliente_al_dia(self):
         encabezado = ";".join(planilla.COLUMNAS)
@@ -1479,3 +1539,215 @@ class ElMandatoPresentaALaEmpresa(TestCase):
         forward = Forward.objects.get()
         self.assertEqual(construir_cartera(forward, campana)["lote"]["acreedor"]["nombre_fantasia"],
                          "Patrimonio Inmuebles")
+
+
+# ==========================================================================
+#  El despachador: los reintentos corren solos (manage.py despachar_reenvios --cada)
+# ==========================================================================
+
+from unittest import mock as _mock  # noqa: E402
+
+COMANDO = "integracion.management.commands.despachar_reenvios"
+
+
+class ElDespachadorReintentaSolo(TestCase):
+
+    def correr(self, **opciones):
+        salida, errores = StringIO(), StringIO()
+        call_command("despachar_reenvios", stdout=salida, stderr=errores, **opciones)
+        return salida.getvalue(), errores.getvalue()
+
+    def test_revisa_las_bandejas_en_cada_vuelta(self):
+        with _mock.patch(f"{COMANDO}.configurado", return_value=True), \
+                _mock.patch(f"{COMANDO}.despachar_pendientes", return_value=[]) as carteras, \
+                _mock.patch(f"{COMANDO}.despachar_eventos_pendientes", return_value=[]) as eventos, \
+                _mock.patch(f"{COMANDO}.time.sleep") as espera:
+            self.correr(cada=60, vueltas=3)
+
+        self.assertEqual((carteras.call_count, eventos.call_count), (3, 3))
+        #  Espera entre vuelta y vuelta, no despues de la ultima.
+        self.assertEqual([c.args for c in espera.call_args_list], [(60,), (60,)])
+
+    def test_una_vuelta_que_falla_no_lo_detiene(self):
+        with _mock.patch(f"{COMANDO}.configurado", return_value=True), \
+                _mock.patch(f"{COMANDO}.despachar_pendientes", side_effect=[RuntimeError("se cayo MySQL"), []]), \
+                _mock.patch(f"{COMANDO}.despachar_eventos_pendientes", return_value=[]) as eventos, \
+                _mock.patch(f"{COMANDO}.time.sleep"):
+            _, errores = self.correr(cada=30, vueltas=2)
+
+        self.assertIn("se cayo MySQL", errores)
+        self.assertEqual(eventos.call_count, 1)    # la segunda vuelta si llego a los eventos
+
+    def test_sin_nada_pendiente_no_llena_el_registro(self):
+        with _mock.patch(f"{COMANDO}.configurado", return_value=True), \
+                _mock.patch(f"{COMANDO}.despachar_pendientes", return_value=[]), \
+                _mock.patch(f"{COMANDO}.despachar_eventos_pendientes", return_value=[]), \
+                _mock.patch(f"{COMANDO}.time.sleep"):
+            salida, _ = self.correr(cada=60, vueltas=5)
+
+        self.assertEqual(salida.strip().splitlines(), ["Despachador: revisa las bandejas cada 60 segundos."])
+
+    def test_no_acepta_menos_de_cinco_segundos(self):
+        with self.assertRaises(CommandError):
+            self.correr(cada=1)
+
+
+# ==========================================================================
+#  Conectar desde Docker: «localhost» es el propio contenedor
+# ==========================================================================
+
+from django.test import RequestFactory  # noqa: E402
+
+from .plataforma import ConexionFallida, direccion_de_avisos  # noqa: E402
+
+
+@override_settings(DATABRIDGE={**DATABRIDGE_PRUEBA, "URL": "", "CLAVE": ""}, ALLOWED_HOSTS=["localhost", "apofyx.cl"])
+class LaConexionAyudaConLocalhost(TestCase):
+
+    def test_si_localhost_no_responde_dice_que_poner(self):
+        with _mock.patch("integracion.plataforma.en_docker", return_value=True), \
+                self.assertRaises(ConexionFallida) as caso:
+            conectar("http://localhost:8080", "tbk_clave", "http://host.docker.internal:8000/api/v1/eventos",
+                     PlataformaFalsa(caida=True))
+        self.assertIn("usa http://host.docker.internal:8080", str(caso.exception))
+
+    def test_una_clave_rechazada_no_trae_la_pista(self):
+        #  Respondio: el problema no es la direccion.
+        with self.assertRaises(ConexionFallida) as caso:
+            conectar("http://localhost:8080", "tbk_ajena", "http://apofyx.cl/e", PlataformaFalsa(rut="76418902-7"))
+        self.assertNotIn("host.docker.internal", str(caso.exception))
+
+    def test_en_docker_el_aviso_se_propone_donde_la_plataforma_lo_encuentra(self):
+        pedido = RequestFactory().get("/panel/plataforma/", HTTP_HOST="localhost:8000")
+        with _mock.patch("integracion.plataforma.en_docker", return_value=True):
+            self.assertEqual(direccion_de_avisos(pedido), "http://host.docker.internal:8000/api/v1/eventos")
+        with _mock.patch("integracion.plataforma.en_docker", return_value=False):
+            self.assertEqual(direccion_de_avisos(pedido), "http://localhost:8000/api/v1/eventos")
+
+    def test_con_un_dominio_de_verdad_no_se_toca(self):
+        pedido = RequestFactory().get("/panel/plataforma/", HTTP_HOST="apofyx.cl")
+        with _mock.patch("integracion.plataforma.en_docker", return_value=True):
+            self.assertEqual(direccion_de_avisos(pedido), "http://apofyx.cl/api/v1/eventos")
+
+
+# ==========================================================================
+#  La disputa: el deudor no reconoce la deuda y la empresa que cobra la revisa
+# ==========================================================================
+
+@override_settings(DATABRIDGE=CON_EVENTOS)
+class LaDisputaRecorreLaCadena(TestCase):
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+    def deuda(self):
+        return Debt.objects.get(external_id="CTR-2025-014")
+
+    def test_una_disputa_deja_la_deuda_disputada(self):
+        respuesta = recibir_evento(evento_de_databridge("deuda.disputada", motivo="ya_pagada"))
+        self.assertEqual(respuesta["resultado"], "en gestion -> disputada")
+        self.assertEqual(self.deuda().status, Debt.Status.DISPUTED)
+
+    def test_reanudada_vuelve_a_gestion_o_a_su_convenio(self):
+        recibir_evento(evento_de_databridge("deuda.disputada", motivo="ya_pagada"))
+        recibir_evento(evento_de_databridge("deuda.reanudada", motivo="disputa_rechazada", con_convenio=False))
+        self.assertEqual(self.deuda().status, Debt.Status.OPEN)
+
+        recibir_evento({**evento_de_databridge("deuda.disputada", motivo="otro"), "id": "evt_otra_disputa"})
+        recibir_evento({**evento_de_databridge("deuda.reanudada", con_convenio=True), "id": "evt_otra_vuelta"})
+        self.assertEqual(self.deuda().status, Debt.Status.REPACTED)
+
+    def test_reanudada_no_reabre_lo_que_no_estaba_en_disputa(self):
+        recibir_evento(evento_de_databridge("deuda.saldada"))
+        respuesta = recibir_evento(evento_de_databridge("deuda.reanudada", con_convenio=False))
+        self.assertEqual(respuesta["resultado"], "se mantiene pagada")
+        self.assertEqual(self.deuda().status, Debt.Status.PAID)
+
+    def test_retirada_por_disputa_resuelta_queda_con_su_motivo(self):
+        recibir_evento(evento_de_databridge("deuda.disputada", motivo="no_reconoce"))
+        recibir_evento(evento_de_databridge("deuda.retirada", motivo="disputa_resuelta"))
+        self.assertEqual((self.deuda().status, self.deuda().withdrawn_reason),
+                         (Debt.Status.WITHDRAWN, "disputa_resuelta"))
+
+    def test_los_avisos_de_disputa_le_llegan_al_acreedor(self):
+        Subscription.registrar(self.acreedor, "http://patrimonio.prueba/api/eventos")
+        recibir_evento(evento_de_databridge("deuda.disputada", motivo="ya_pagada"))
+        recibir_evento(evento_de_databridge("deuda.reanudada", con_convenio=False))
+        self.assertEqual(list(OutboundEvent.objects.order_by("pk").values_list("type", flat=True)),
+                         ["deuda.disputada", "deuda.reanudada"])
+
+    def test_el_cliente_se_puede_suscribir_a_la_reanudacion(self):
+        from .eventos import TIPOS
+        self.assertIn("deuda.reanudada", TIPOS)
+
+
+# ==========================================================================
+#  Los secretos que APOFYX tiene que leer de vuelta van cifrados en la base
+# ==========================================================================
+
+import importlib  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+from django.db import connection  # noqa: E402
+
+from .cifrado import cifrar, descifrar, esta_cifrado  # noqa: E402
+
+
+def _en_la_base(tabla, columna, pk):
+    with connection.cursor() as cursor:
+        cursor.execute(f"SELECT {columna} FROM {tabla} WHERE id = %s", [pk])
+        return cursor.fetchone()[0]
+
+
+class LosSecretosVanCifrados(TestCase):
+
+    def test_cifra_y_descifra_de_vuelta_sin_dejar_el_valor_a_la_vista(self):
+        cifrado = cifrar("whsec_de_prueba")
+        self.assertTrue(esta_cifrado(cifrado))
+        self.assertNotIn("whsec_de_prueba", cifrado)
+        self.assertEqual(descifrar(cifrado), "whsec_de_prueba")
+        self.assertNotEqual(cifrar("whsec_de_prueba"), cifrado, "cada vez con su propio IV")
+
+    def test_lo_vacio_y_lo_de_antes_pasan_igual(self):
+        self.assertIsNone(cifrar(None))
+        self.assertEqual(cifrar(""), "")
+        self.assertEqual(descifrar("en-claro-de-antes"), "en-claro-de-antes")
+        una = cifrar("x")
+        self.assertEqual(cifrar(una), una, "no se cifra dos veces")
+
+    def test_con_otra_llave_no_se_descifra(self):
+        cifrado = cifrar("whsec_de_prueba")
+        with override_settings(CIFRADO_LLAVE="otra-llave"):
+            with self.assertRaises(Exception):
+                descifrar(cifrado)
+
+    def test_el_secreto_de_una_suscripcion_va_cifrado_y_se_firma_con_el_original(self):
+        suscripcion = Subscription.registrar(crear_acreedor(), "http://cliente.prueba/avisos")
+        guardado = _en_la_base("integracion_subscription", "secret", suscripcion.pk)
+        self.assertTrue(guardado.startswith("enc:v1:"))
+        self.assertEqual(Subscription.objects.get(pk=suscripcion.pk).secret, suscripcion.secret)
+        self.assertTrue(suscripcion.secret.startswith("whsec_"))
+
+    def test_la_conexion_con_la_plataforma_va_cifrada_y_se_lee_en_claro(self):
+        PlatformConnection.objects.create(url="http://plataforma.prueba", api_key="tb_clave_de_prueba",
+                                          events_secret="whsec_plataforma")
+        self.assertTrue(_en_la_base("integracion_platformconnection", "api_key", 1).startswith("enc:v1:"))
+        self.assertTrue(_en_la_base("integracion_platformconnection", "events_secret", 1).startswith("enc:v1:"))
+        conf = plataforma()
+        self.assertEqual((conf["CLAVE"], conf["SECRETO_EVENTOS"]), ("tb_clave_de_prueba", "whsec_plataforma"))
+
+    def test_la_migracion_cifra_lo_que_estaba_en_claro_y_vuelve_atras(self):
+        migracion = importlib.import_module("integracion.migrations.0007_secretos_cifrados")
+        editor = SimpleNamespace(connection=connection, quote_name=connection.ops.quote_name)
+        with connection.cursor() as cursor:
+            cursor.execute("INSERT INTO integracion_platformconnection (id, url, api_key, events_secret, updated_at)"
+                           " VALUES (1, 'http://p', 'tb_en_claro', NULL, CURRENT_TIMESTAMP)")
+
+        migracion.cifrar_lo_guardado(None, editor)
+        self.assertTrue(_en_la_base("integracion_platformconnection", "api_key", 1).startswith("enc:v1:"))
+        self.assertIsNone(_en_la_base("integracion_platformconnection", "events_secret", 1))
+        self.assertEqual(PlatformConnection.objects.get().api_key, "tb_en_claro")
+
+        migracion.descifrar_lo_guardado(None, editor)
+        self.assertEqual(_en_la_base("integracion_platformconnection", "api_key", 1), "tb_en_claro")
