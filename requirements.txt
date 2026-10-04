@@ -18,7 +18,7 @@ mysqlclient>=2.2.8
 
 # --- Configuracion ---
 # Credenciales de MySQL, SECRET_KEY y claves del LLM fuera del codigo, en .env
-python-dotenv==1.2.2
+python-dotenv==1.2.3
 
 # --- Archivos estaticos ---
 # Con DEBUG=0 Django no sirve los estaticos: espera un nginx delante. En el
