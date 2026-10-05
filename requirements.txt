@@ -43,4 +43,4 @@ cryptography==50.0.2
 # Mide que porcentaje del codigo ejecutan las pruebas:
 #   python -m coverage run --source=crm,assistant,cartera,integracion,config --omit="*/migrations/*,*/tests.py" manage.py test
 #   python -m coverage report -m
-coverage==7.16.1
+coverage==7.16.2
