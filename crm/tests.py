@@ -1484,11 +1484,45 @@ class PanelApruebaYOrganizaTest(TestCase):
     def test_crear_una_campana(self):
         r = self.client.post(reverse("panel:campana_nueva", args=[self.empresa.pk]), {
             "name": "Arriendos octubre", "starts_on": "2026-10-01", "status": "running",
-            "channels": ["whatsapp", "email"], "contact_attempts": 3,
+            "channels": ["email"], "contact_attempts": 3, "cadencia": "1, 4, 11",
         })
         self.assertRedirects(r, reverse("panel:cliente_detalle", args=[self.empresa.pk]))
         campana = self.empresa.campaigns.get()
-        self.assertEqual(campana.channels, ["whatsapp", "email"])
+        self.assertEqual(campana.channels, ["email"])
+        self.assertEqual(campana.cadence_days, [1, 4, 11])
+
+    def test_la_campana_solo_ofrece_lo_que_la_plataforma_ejecuta(self):
+        r = self.client.post(reverse("panel:campana_nueva", args=[self.empresa.pk]), {
+            "name": "Arriendos octubre", "starts_on": "2026-10-01", "status": "running",
+            "channels": ["whatsapp", "email"], "contact_attempts": 3,
+        })
+        self.assertEqual(r.status_code, 200, "WhatsApp todavia no se puede enviar")
+        self.assertFalse(self.empresa.campaigns.exists())
+
+    def test_sin_cadencia_queda_la_de_siempre(self):
+        self.client.post(reverse("panel:campana_nueva", args=[self.empresa.pk]), {
+            "name": "Arriendos octubre", "starts_on": "2026-10-01", "status": "running",
+            "channels": ["email"], "contact_attempts": 3,
+        })
+        self.assertIsNone(self.empresa.campaigns.get().cadence_days)
+
+    def test_una_cadencia_desordenada_o_corta_no_se_acepta(self):
+        for cadencia, error in (("4, 1, 11", "de menor a mayor"), ("1, 4", "necesita 3 días"),
+                                ("uno, dos", "números separados por coma")):
+            r = self.client.post(reverse("panel:campana_nueva", args=[self.empresa.pk]), {
+                "name": "Arriendos " + cadencia, "starts_on": "2026-10-01", "status": "running",
+                "channels": ["email"], "contact_attempts": 3, "cadencia": cadencia,
+            })
+            self.assertContains(r, error)
+        self.assertFalse(self.empresa.campaigns.exists())
+
+    def test_una_cadencia_muy_seguida_se_crea_con_una_advertencia(self):
+        r = self.client.post(reverse("panel:campana_nueva", args=[self.empresa.pk]), {
+            "name": "Arriendos octubre", "starts_on": "2026-10-01", "status": "running",
+            "channels": ["email"], "contact_attempts": 3, "cadencia": "1, 2, 5",
+        }, follow=True)
+        self.assertContains(r, "dos veces por semana")
+        self.assertEqual(self.empresa.campaigns.get().cadence_days, [1, 2, 5])
 
     def test_la_campana_nueva_trae_la_fecha_de_hoy_que_entiende_el_navegador(self):
         # Un <input type="date"> solo acepta AAAA-MM-DD: con 29/09/2026 se ve vacio.

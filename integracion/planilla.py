@@ -24,10 +24,11 @@ COLUMNAS = [
     "deudor_correo", "deudor_telefono", "moneda", "concepto", "referencias",
     "cargo_concepto", "cargo_periodo", "cargo_monto", "cargo_vencimiento",
 ]
-#  Tienen que repetirse iguales en cada fila de los cargos de una deuda.
+#  Tienen que repetirse iguales en cada fila de los cargos de una deuda. La tasa
+#  es opcional: una planilla sin esa columna sirve igual.
 DE_LA_DEUDA = [
     "accion", "deudor_rut", "deudor_tipo", "deudor_nombre", "deudor_correo",
-    "deudor_telefono", "moneda", "concepto", "referencias",
+    "deudor_telefono", "moneda", "concepto", "referencias", "tasa_interes_mensual",
 ]
 #  Una fila con las cuatro vacias es un cliente al dia.
 DEL_CARGO = ["cargo_concepto", "cargo_periodo", "cargo_monto", "cargo_vencimiento"]
@@ -59,8 +60,8 @@ def leer(contenido, lote_id, fecha_corte, acreedor_rut):
     indice = {nombre: i for i, nombre in enumerate(encabezado)}
 
     def celda(fila, nombre):
-        i = indice[nombre]
-        return fila[i].strip() if i < len(fila) else ""
+        i = indice.get(nombre)
+        return fila[i].strip() if i is not None and i < len(fila) else ""
 
     deudas, primera_fila, columnas_de, al_dia = {}, {}, {}, set()
     for n, fila in enumerate(filas[1:], start=2):     # como la numera Excel, con el encabezado en la 1
@@ -125,6 +126,13 @@ def _nueva_deuda(id_deuda, fila, celda):
             referencias[clave.strip()] = valor.strip()
     if referencias:
         deuda["referencias"] = referencias
+    tasa = celda(fila, "tasa_interes_mensual").replace(",", ".")
+    if tasa:
+        #  Si no es un numero va tal cual, y la ingesta la rechaza con tasa_invalida.
+        try:
+            deuda["tasa_interes_mensual"] = float(Decimal(tasa))
+        except InvalidOperation:
+            deuda["tasa_interes_mensual"] = tasa
     deuda["cargos"] = []
     return deuda
 

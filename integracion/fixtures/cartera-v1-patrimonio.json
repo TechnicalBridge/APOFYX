@@ -64,6 +64,7 @@
         "contrato": "CTR-2024-007",
         "propiedad": "Local 3, Av. Italia 1320, Providencia"
       },
+      "tasa_interes_mensual": 1.5,
       "cargos": [
         { "concepto": "Arriendo julio", "periodo": "2026-07", "monto": 38.5, "fecha_vencimiento": "2026-07-05" },
         { "concepto": "Arriendo agosto", "periodo": "2026-08", "monto": 38.5, "fecha_vencimiento": "2026-08-05" },

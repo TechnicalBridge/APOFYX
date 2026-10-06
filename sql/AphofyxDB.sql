@@ -232,6 +232,8 @@ CREATE TABLE crm_campaign (
     status        ENUM('draft', 'running', 'paused', 'finished')       NOT NULL DEFAULT 'draft',
     channels      JSON              NOT NULL,
     contact_attempts   SMALLINT UNSIGNED NOT NULL DEFAULT 3,
+    -- El dia en que sale cada toque, desde que la deuda entra. NULL: 1, 4, 11, 25, 45.
+    cadence_days  JSON                  NULL,
     created_at    DATETIME(6)       NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at    DATETIME(6)       NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
                                              ON UPDATE CURRENT_TIMESTAMP(6),
@@ -613,6 +615,8 @@ CREATE TABLE cartera_debt (
     currency         ENUM('CLP', 'UF')    NOT NULL DEFAULT 'CLP',
     concept          VARCHAR(200)  NOT NULL,
     refs             JSON          NOT NULL,
+    -- El interes que pacto el acreedor, en % mensual. NULL: no genera intereses.
+    interest_rate    DECIMAL(5,2)      NULL,
     status           ENUM('open', 'repacted', 'paid', 'withdrawn', 'disputed')   NOT NULL DEFAULT 'open',
     first_batch_id   BIGINT        NOT NULL,
     last_batch_id    BIGINT        NOT NULL,
@@ -632,6 +636,7 @@ CREATE TABLE cartera_debt (
         REFERENCES cartera_batch (id) ON DELETE RESTRICT,
     CONSTRAINT fk_debt_last_batch FOREIGN KEY (last_batch_id)
         REFERENCES cartera_batch (id) ON DELETE RESTRICT,
+    CONSTRAINT ck_debt_interest_rate CHECK (interest_rate IS NULL OR interest_rate > 0),
 
 
     INDEX ix_debt_creditor_status (creditor_id, status),

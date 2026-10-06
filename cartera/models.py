@@ -190,6 +190,10 @@ class Debt(models.Model):
         "referencias", default=dict, blank=True,
         help_text="Lo que se le muestra al deudor para que reconozca la deuda.",
     )
+    interest_rate = models.DecimalField(
+        "interes mensual", max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text="El interes que pacto el acreedor, en porcentaje mensual. Vacio: la deuda no genera intereses.",
+    )
     status = Categoria(
         "estado", max_length=20, choices=Status.choices, default=Status.OPEN
     )
@@ -215,6 +219,10 @@ class Debt(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["creditor", "external_id"], name="uq_debt_external"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(interest_rate__isnull=True) | models.Q(interest_rate__gt=0),
+                name="ck_debt_interest_rate",
             ),
         ]
         indexes = [
