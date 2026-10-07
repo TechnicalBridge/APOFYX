@@ -470,8 +470,10 @@ def campana_nueva(request, pk):
         if Campaign.objects.filter(creditor=empresa, name=campana.name).exists():
             form.add_error("name", "Esta empresa ya tiene una campaña con ese nombre.")
         else:
-            campana.save()
+            form.save()
             messages.success(request, f"La campaña {campana.name} quedó creada.")
+            if form.advertencia:
+                messages.warning(request, form.advertencia)
             _despachar_esperando(request, empresa)
             return redirect("panel:cliente_detalle", pk=empresa.pk)
 
@@ -493,6 +495,13 @@ def campana_estado(request, pk, campana_pk):
         campana.status = nuevo
         campana.save(update_fields=["status", "updated_at"])
         messages.success(request, f"{campana.name} quedó {campana.get_status_display().lower()}.")
+        #  La plataforma de pagos ejecuta la campana: se entera ya, no con la proxima cartera.
+        from integracion.reenvio import sincronizar_campana
+
+        error = sincronizar_campana(campana)
+        if isinstance(error, str):
+            messages.warning(request, "No se pudo avisar a la plataforma de pagos: se le avisa con la próxima "
+                                      f"cartera. ({error})")
         if nuevo == Campaign.Status.RUNNING:
             _despachar_esperando(request, empresa)
     return redirect("panel:cliente_detalle", pk=empresa.pk)

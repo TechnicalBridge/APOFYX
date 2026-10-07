@@ -1,5 +1,7 @@
 """Formularios del sitio publico, del panel y del portal de empresas."""
 
+import re
+
 from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import AuthenticationForm
@@ -214,11 +216,31 @@ class EntrarEmpresaForm(AuthenticationForm):
 
 
 class CampanaForm(forms.ModelForm):
-    """Una campaña nueva sobre la cartera de una empresa. La empresa la fija la vista."""
+    """
+    Una campaña nueva sobre la cartera de una empresa. La empresa la fija la vista.
 
-    CANALES = [("whatsapp", "WhatsApp"), ("email", "Correo"), ("sms", "SMS")]
+    La plataforma de pagos la ejecuta: manda cada toque el día que dice la
+    cadencia, hasta los intentos, y solo por correo, que es lo que tiene
+    conectado. WhatsApp y SMS vuelven al formulario cuando se puedan enviar.
+    """
+
+    CANALES = [("email", "Correo")]
     channels = forms.MultipleChoiceField(label="Canales", choices=CANALES,
                                          widget=forms.CheckboxSelectMultiple)
+    cadencia = forms.CharField(
+        label="Cadencia (días)", required=False,
+        widget=forms.TextInput(attrs={"placeholder": "1, 4, 11, 25, 45"}),
+        help_text="El día en que sale cada correo, contado desde que la deuda entra a la campaña. "
+                  "Vacía: 1, 4, 11, 25 y 45.",
+    )
+    field_order = ["name", "starts_on", "ends_on", "status", "channels", "contact_attempts", "cadencia"]
+
+    #  La Ley 19.496 (art. 37) deja escribirle a un deudor a lo mas dos veces por
+    #  semana, con dos dias entre una y otra. La plataforma lo respeta igual, pero
+    #  una cadencia mas seguida no se va a cumplir como esta escrita.
+    ADVERTENCIA_LEY = ("Algunos toques van con menos de dos días entre uno y otro. La ley deja escribirle a un "
+                       "deudor a lo más dos veces por semana y con dos días entre una y otra: esos correos "
+                       "saldrán en cuanto se pueda.")
 
     class Meta:
         model = Campaign
@@ -235,14 +257,43 @@ class CampanaForm(forms.ModelForm):
         if not self.is_bound and self.instance.pk is None:
             self.initial.setdefault("starts_on", timezone.localdate())
             self.initial.setdefault("status", Campaign.Status.RUNNING)
-            self.initial.setdefault("channels", ["whatsapp", "email"])
+            self.initial.setdefault("channels", ["email"])
+        if self.instance.cadence_days:
+            self.initial.setdefault("cadencia", ", ".join(str(d) for d in self.instance.cadence_days))
         _aplicar_clases({n: c for n, c in self.fields.items() if n != "channels"})
+
+    def clean_cadencia(self):
+        texto = (self.cleaned_data.get("cadencia") or "").strip()
+        if not texto:
+            return None
+        try:
+            dias = [int(d) for d in re.split(r"[,;\s]+", texto) if d]
+        except ValueError:
+            raise forms.ValidationError("Escribe los días como números separados por coma: 1, 4, 11.")
+        if any(d < 0 for d in dias) or dias != sorted(set(dias)):
+            raise forms.ValidationError("Los días van de menor a mayor y sin repetirse: 1, 4, 11.")
+        if len(dias) > 10:
+            raise forms.ValidationError("Una campaña tiene a lo más 10 toques.")
+        return dias
+
+    @property
+    def advertencia(self):
+        """Si la cadencia (o la de siempre, si va vacia) pide toques mas seguidos de lo que deja la ley."""
+        dias = self.cleaned_data.get("cadencia") or [1, 4, 11, 25, 45]
+        return self.ADVERTENCIA_LEY if any(b - a < 2 for a, b in zip(dias, dias[1:])) else None
+
+    def save(self, commit=True):
+        self.instance.cadence_days = self.cleaned_data.get("cadencia")
+        return super().save(commit)
 
     def clean(self):
         datos = super().clean()
         inicio, fin = datos.get("starts_on"), datos.get("ends_on")
         if inicio and fin and fin < inicio:
             self.add_error("ends_on", "La campaña no puede terminar antes de empezar.")
+        cadencia, intentos = datos.get("cadencia"), datos.get("contact_attempts")
+        if cadencia and intentos and len(cadencia) < intentos:
+            self.add_error("cadencia", f"Con {intentos} intentos, la cadencia necesita {intentos} días.")
         return datos
 
 

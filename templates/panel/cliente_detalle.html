@@ -132,6 +132,7 @@
                         {{ fila.campana.starts_on|date:"d/m/Y" }}
                         {% if fila.campana.ends_on %}— {{ fila.campana.ends_on|date:"d/m/Y" }}{% endif %}
                         · {{ fila.campana.contact_attempts }} toques
+                        {% if fila.campana.cadence_days %}· días {{ fila.campana.cadence_days|join:", " }}{% endif %}
                     </span>
                 </div>
                 <form method="post" action="{% url 'panel:campana_estado' empresa.pk fila.campana.pk %}" class="d-flex gap-2">

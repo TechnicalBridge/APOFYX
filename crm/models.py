@@ -174,6 +174,10 @@ class Campaign(models.Model):
         "estado", max_length=20, choices=Status.choices, default=Status.DRAFT
     )
     channels = models.JSONField("canales", default=list)
+    cadence_days = models.JSONField(
+        "cadencia (dias)", null=True, blank=True,
+        help_text="El dia en que sale cada toque, contado desde que la deuda entra. Vacia: 1, 4, 11, 25, 45.",
+    )
     contact_attempts = models.PositiveSmallIntegerField(
         "intentos de contacto", default=3,
         help_text="Cuantas veces se le escribe a cada deudor durante la campana.",

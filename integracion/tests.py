@@ -1751,3 +1751,116 @@ class LosSecretosVanCifrados(TestCase):
 
         migracion.descifrar_lo_guardado(None, editor)
         self.assertEqual(_en_la_base("integracion_platformconnection", "api_key", 1), "tb_en_claro")
+
+
+# ==========================================================================
+#  La tasa de interes del acreedor, y la campana que ejecuta la plataforma
+# ==========================================================================
+
+from .reenvio import estado_para_databridge, sincronizar_campana  # noqa: E402
+
+
+def _con_tasa(tasa):
+    cartera = cartera_de_ejemplo()
+    for deuda in cartera["deudas"]:
+        if deuda["id_externo"] == "CTR-2025-014":
+            deuda["tasa_interes_mensual"] = tasa
+    return cartera
+
+
+@override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+class LaTasaDelAcreedorViajaConLaDeuda(TestCase):
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+
+    def test_la_tasa_queda_en_la_deuda_y_sale_igual(self):
+        recibir_cartera(self.acreedor, _con_tasa(1.5))
+
+        deuda = Debt.objects.get(external_id="CTR-2025-014")
+        self.assertEqual(deuda.interest_rate, Decimal("1.50"))
+        cartera = construir_cartera(Forward.objects.get(), campana_de(self.acreedor))
+        sale = next(d for d in cartera["deudas"] if d["id_externo"] == "CTR-2025-014")
+        self.assertEqual(sale["tasa_interes_mensual"], 1.5)
+
+    def test_sin_tasa_no_viaja_ninguna(self):
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+        self.assertIsNone(Debt.objects.get(external_id="CTR-2025-014").interest_rate)
+        cartera = construir_cartera(Forward.objects.get(), campana_de(self.acreedor))
+        sale = next(d for d in cartera["deudas"] if d["id_externo"] == "CTR-2025-014")
+        self.assertNotIn("tasa_interes_mensual", sale)
+
+    def test_una_tasa_que_no_es_un_porcentaje_valido_se_rechaza(self):
+        for n, tasa in enumerate((0, -1, "uno y medio", 1.555, True)):
+            cartera = _con_tasa(tasa)
+            cartera["lote"]["id_externo"] = f"PAT-TASA-{n}"
+            respuesta = recibir_cartera(self.acreedor, cartera, reenviar=False)
+            fila = next(r for r in respuesta["resultados"] if r["id_externo"] == "CTR-2025-014")
+            self.assertEqual(fila["errores"][0]["codigo"], "tasa_invalida", tasa)
+
+    def test_una_cartera_sin_tasa_la_quita(self):
+        recibir_cartera(self.acreedor, _con_tasa(1.5))
+        siguiente = cartera_de_ejemplo()
+        siguiente["lote"]["id_externo"] = "PAT-2026-09-18-02"
+        recibir_cartera(self.acreedor, siguiente)
+
+        self.assertIsNone(Debt.objects.get(external_id="CTR-2025-014").interest_rate)
+
+    def test_la_planilla_lee_la_tasa_con_coma(self):
+        encabezado = ";".join(planilla.COLUMNAS + ["tasa_interes_mensual"])
+        fila = ("CTR-1;registrar;;16482337-7;persona;Felipe;f@correo.cl;;CLP;Arriendo;;"
+                "Arriendo agosto;2026-08;410000;2026-08-05;1,5")
+        texto = encabezado + "\n" + fila + "\n"
+        cartera = planilla.leer(texto.encode("utf-8"), "CSV-1", "2026-09-18", RUT_PATRIMONIO)
+        self.assertEqual(cartera["deudas"][0]["tasa_interes_mensual"], 1.5)
+
+
+@override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+class LaPlataformaEjecutaLaCampana(TestCase):
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        self.campana = campana_de(self.acreedor)
+        self.campana.cadence_days = [1, 4, 11, 25, 45]
+        self.campana.save()
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+    def test_la_campana_lleva_su_cadencia_y_su_estado(self):
+        cliente = ClienteFalso()
+        asegurar_mandato_y_campana(cliente, Batch.objects.get(), self.campana)
+
+        ruta, campana = cliente.llamadas[1]
+        self.assertEqual(ruta, "/api/v1/campanas")
+        self.assertEqual(campana["cadencia_dias"], [1, 4, 11, 25, 45])
+        self.assertEqual(campana["estado"], "en_curso")
+
+    def test_los_estados_de_apofyx_en_el_contrato(self):
+        self.assertEqual(estado_para_databridge(Campaign.Status.RUNNING), "en_curso")
+        self.assertEqual(estado_para_databridge(Campaign.Status.PAUSED), "pausada")
+        self.assertEqual(estado_para_databridge(Campaign.Status.FINISHED), "terminada")
+        self.assertEqual(estado_para_databridge(Campaign.Status.DRAFT), "pausada", "un borrador no contacta")
+
+    def test_pausarla_avisa_a_la_plataforma_si_ya_la_tiene(self):
+        Forward.objects.update(status=Forward.Status.SENT)
+        Batch.objects.update(campaign=self.campana)
+        self.campana.status = Campaign.Status.PAUSED
+        self.campana.save()
+        cliente = ClienteFalso()
+
+        self.assertIs(sincronizar_campana(self.campana, cliente), True)
+        self.assertEqual(cliente.llamadas[0][1]["estado"], "pausada")
+
+    def test_una_campana_que_la_plataforma_no_conoce_no_se_avisa(self):
+        cliente = ClienteFalso()
+
+        self.assertIsNone(sincronizar_campana(self.campana, cliente))
+        self.assertEqual(cliente.llamadas, [])
+
+    def test_si_la_plataforma_no_responde_lo_dice(self):
+        Forward.objects.update(status=Forward.Status.SENT)
+        Batch.objects.update(campaign=self.campana)
+
+        error = sincronizar_campana(self.campana, ClienteFalso(caido=True))
+
+        self.assertIn("Sin respuesta", error)

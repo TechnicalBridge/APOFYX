@@ -155,6 +155,8 @@ def construir_cartera(forward, campana):
         }
         if deuda.refs:
             item["referencias"] = deuda.refs
+        if deuda.interest_rate is not None:
+            item["tasa_interes_mensual"] = float(deuda.interest_rate)
         item["cargos"] = [
             {
                 "concepto": cargo.concept,
@@ -271,7 +273,54 @@ def asegurar_mandato_y_campana(cliente, batch, campana):
         **({"fin": campana.ends_on.isoformat()} if campana.ends_on else {}),
         "canales": canales_para_databridge(campana.channels),
         "intentos": campana.contact_attempts,
+        **({"cadencia_dias": campana.cadence_days} if campana.cadence_days else {}),
+        "estado": estado_para_databridge(campana.status),
     })
+
+
+#  DataBridge solo ejecuta una campana en curso. Una en borrador todavia no
+#  contacta: alla queda pausada.
+ESTADOS_DEL_CONTRATO = {
+    Campaign.Status.DRAFT: "pausada",
+    Campaign.Status.RUNNING: "en_curso",
+    Campaign.Status.PAUSED: "pausada",
+    Campaign.Status.FINISHED: "terminada",
+}
+
+
+def estado_para_databridge(estado):
+    return ESTADOS_DEL_CONTRATO.get(estado, "pausada")
+
+
+def sincronizar_campana(campana, cliente=None):
+    """
+    El personal pauso, reanudo o termino una campana: DataBridge, que la
+    ejecuta, se entera ahora y no con la proxima cartera.
+
+    Solo si la campana ya esta alla, que es cuando se le entrego una cartera
+    con ella: antes no hay nada que avisar. Devuelve None si no habia que
+    hacer nada, True si DataBridge ya lo sabe, o el error si no respondio; la
+    proxima cartera la vuelve a mandar igual.
+    """
+    if not Forward.objects.filter(batch__campaign=campana, status=Forward.Status.SENT).exists():
+        return None
+    cliente = cliente or ClienteDataBridge()
+    try:
+        cliente.enviar("/api/v1/campanas", {
+            "id_externo": id_de_campana(campana),
+            "acreedor_rut": campana.creditor.tax_id,
+            "nombre": campana.name,
+            "inicio": campana.starts_on.isoformat(),
+            **({"fin": campana.ends_on.isoformat()} if campana.ends_on else {}),
+            "canales": canales_para_databridge(campana.channels),
+            "intentos": campana.contact_attempts,
+            **({"cadencia_dias": campana.cadence_days} if campana.cadence_days else {}),
+            "estado": estado_para_databridge(campana.status),
+        })
+    except ErrorDataBridge as error:
+        log.warning("No se pudo avisar a DataBridge del estado de la campana %s: %s", campana.pk, error)
+        return str(error)
+    return True
 
 
 # ---------------------------------------------------------------------------

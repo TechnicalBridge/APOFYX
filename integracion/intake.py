@@ -40,7 +40,7 @@ MOTIVOS_DE_RETIRO = {"pago_directo", "acuerdo_directo", "error", "disputa_resuel
 
 CAMPOS_DEUDA = {
     "id_externo", "accion", "motivo_retiro", "deudor", "moneda", "concepto",
-    "referencias", "cargos",
+    "referencias", "cargos", "tasa_interes_mensual",
 }
 CAMPOS_CARGO = {"concepto", "periodo", "monto", "fecha_vencimiento"}
 
@@ -140,6 +140,11 @@ def _validar_deuda(deuda, corte, vistos):
         errores.append(_error("moneda", "moneda_invalida", "La moneda va como CLP o UF"))
     if not deuda.get("concepto"):
         errores.append(_error("concepto", "concepto_faltante", "La deuda no trae concepto"))
+    tasa = _tasa(deuda.get("tasa_interes_mensual"))
+    if tasa is False:
+        errores.append(_error("tasa_interes_mensual", "tasa_invalida",
+                              "La tasa va como un numero mayor que cero, en porcentaje mensual "
+                              "y con hasta dos decimales"))
 
     cargos, vencimientos = [], []
     if not isinstance(crudos, list):
@@ -185,8 +190,23 @@ def _validar_deuda(deuda, corte, vistos):
     return [], {
         "accion": "registrar", "rut": rut, "deudor": deudor, "moneda": moneda,
         "concepto": deuda["concepto"], "referencias": deuda.get("referencias") or {},
-        "cargos": cargos, "mora": mora,
+        "cargos": cargos, "mora": mora, "tasa": tasa,
     }
+
+
+def _tasa(valor):
+    """
+    La tasa del acreedor como Decimal, None si no viene, o False si no sirve.
+    El tope (la tasa maxima convencional) lo aplica la plataforma de pagos.
+    """
+    if valor is None:
+        return None
+    if isinstance(valor, bool) or not isinstance(valor, (int, float, Decimal)):
+        return False
+    tasa = Decimal(str(valor))
+    if tasa <= 0 or -tasa.normalize().as_tuple().exponent > 2:
+        return False
+    return tasa
 
 
 def _campos_ignorados(payload):
@@ -400,7 +420,7 @@ def _guardar_deuda(creditor, batch, id_deuda, datos, existente):
         deuda = Debt.objects.create(
             creditor=creditor, debtor=deudor, external_id=id_deuda,
             currency=datos["moneda"], concept=datos["concepto"],
-            refs=datos["referencias"], first_batch=batch, last_batch=batch,
+            refs=datos["referencias"], interest_rate=datos["tasa"], first_batch=batch, last_batch=batch,
         )
         _reemplazar_cargos(deuda, nuevos)
         return "registrada"
@@ -420,11 +440,14 @@ def _guardar_deuda(creditor, batch, id_deuda, datos, existente):
         and existente.concept == datos["concepto"]
         and existente.currency == datos["moneda"]
         and existente.status == estado
+        and existente.interest_rate == datos["tasa"]
     )
     existente.debtor = deudor
     existente.currency = datos["moneda"]
     existente.concept = datos["concepto"]
     existente.refs = datos["referencias"]
+    #  El acreedor manda lo que vale hoy: una cartera sin tasa la quita.
+    existente.interest_rate = datos["tasa"]
     existente.status = estado
     existente.withdrawn_reason = None
     existente.last_batch = batch
