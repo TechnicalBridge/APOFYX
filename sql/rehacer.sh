@@ -28,9 +28,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 BASE="${DB_NAME:-apofyx}"
-CLAVE="${MYSQL_ROOT_PASSWORD:-rootpass}"
-MYSQL="docker compose exec -T db mysql -uroot -p$CLAVE --default-character-set=utf8mb4"
-VOLCAR="docker compose exec -T db mysqldump -uroot -p$CLAVE --default-character-set=utf8mb4"
+#  La clave de root la pone el propio contenedor (MYSQL_ROOT_PASSWORD): no pasa
+#  por este script ni queda en la linea de comandos.
+mysql_db() { docker compose exec -T db sh -c 'MYSQL_PWD=$MYSQL_ROOT_PASSWORD exec mysql -uroot --default-character-set=utf8mb4 "$@"' -- "$@"; }
+volcar_db() { docker compose exec -T db sh -c 'MYSQL_PWD=$MYSQL_ROOT_PASSWORD exec mysqldump -uroot --default-character-set=utf8mb4 "$@"' -- "$@"; }
+MYSQL=mysql_db
+VOLCAR=volcar_db
 
 #  MySQL avisa en cada llamada que la clave va en la linea de comandos. Ese
 #  aviso se calla; cualquier otra cosa que diga se muestra, porque un error
@@ -85,4 +88,4 @@ echo "     $ESCRITAS filas devueltas; $LEIDAS deudas en la base"
 
 echo
 echo "Listo. La base coincide con sql/AphofyxDB.sql."
-echo "Si algo quedo mal:  docker compose exec -T db mysql -uroot -p$CLAVE $BASE < $RESPALDO"
+echo "Si algo quedo mal:  docker compose exec -T db sh -c 'MYSQL_PWD=\$MYSQL_ROOT_PASSWORD exec mysql -uroot $BASE' < $RESPALDO"

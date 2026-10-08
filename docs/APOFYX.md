@@ -1269,11 +1269,11 @@ Un solo comando levanta la base ya poblada. **Verificado funcionando** el 15-09-
 | --- | --- |
 | `docker-compose.yml` | Orquesta los servicios. `db` activo; `web` bajo el perfil `app` |
 | `Dockerfile` | Imagen de la app Django. Instala `mysqlclient`, que se compila |
-| `.env.example` | Plantilla de configuración. Se copia a `.env`, que no se versiona |
+| `.env.example` | Plantilla de configuración, sin secretos. `preparar-env.ps1` la convierte en `.env` (que no se versiona), con claves al azar |
 | `.dockerignore` / `.gitignore` | Qué no entra a la imagen y qué no entra al repositorio |
 
-```bash
-cp .env.example .env
+```powershell
+powershell -ExecutionPolicy Bypass -File .\preparar-env.ps1   # el .env, con claves al azar
 docker compose up -d          # levanta solo la base
 docker compose down           # detiene, conservando los datos
 docker compose down -v        # detiene Y BORRA los datos
@@ -1418,23 +1418,24 @@ Dos caminos para tener la base corriendo. El primero es el recomendado y el que 
 
 Requiere solo Docker Desktop abierto.
 
-```bash
-cp .env.example .env         # en Windows:  copy .env.example .env
+```powershell
+powershell -ExecutionPolicy Bypass -File .\preparar-env.ps1   # el .env, con claves al azar
 docker compose up -d
 ```
 
 Eso es todo. En unos 15 segundos hay un MySQL 8.4.11 con las 21 tablas, las 4 vistas y los datos de
 demostración ya cargados, porque `sql/AphofyxDB.sql` se monta en `/docker-entrypoint-initdb.d/`.
 
-**Credenciales por defecto** (en `.env`, cambiables):
+**La conexión** (las claves están en tu `.env`, que crea `preparar-env.ps1` con valores al azar;
+ninguna está escrita en el repositorio):
 
 | Dato | Valor |
 | --- | --- |
 | Host | `127.0.0.1` |
 | Puerto | `3307` |
 | Base | `apofyx` |
-| Usuario de aplicación | `apofyx_app` / `apofyx_pass` |
-| Usuario administrador | `root` / `rootpass` |
+| Usuario de aplicación | `apofyx_app`, con la clave de `MYSQL_PASSWORD` |
+| Usuario administrador | `root`, con la clave de `MYSQL_ROOT_PASSWORD` |
 
 Desde **MySQL Workbench**: nueva conexión a `127.0.0.1`, puerto `3307`, usuario `apofyx_app`.
 
@@ -1447,7 +1448,7 @@ Desde **MySQL Workbench**: nueva conexión a `127.0.0.1`, puerto `3307`, usuario
 | `docker compose logs -f db` | Ver el arranque y la carga del script |
 | `docker compose down` | Detiene **conservando** los datos |
 | `docker compose down -v` | Detiene y **borra** los datos |
-| `docker compose exec db mysql -uapofyx_app -papofyx_pass apofyx` | Abrir una consola SQL dentro del contenedor |
+| `docker compose exec db sh -c 'MYSQL_PWD=$MYSQL_PASSWORD mysql -uapofyx_app apofyx'` | Abrir una consola SQL dentro del contenedor. La clave la toma del contenedor |
 
 #### Camino B — MySQL instalado en el equipo
 
@@ -1456,7 +1457,7 @@ tiene servicio registrado ni datos inicializados, así que exige configurarlo—
 
 ```sql
 -- Como root, una sola vez:
-CREATE USER 'apofyx_app'@'localhost' IDENTIFIED BY 'apofyx_pass';
+CREATE USER 'apofyx_app'@'localhost' IDENTIFIED BY '<la clave de DB_PASSWORD de tu .env>';
 GRANT ALL PRIVILEGES ON apofyx.* TO 'apofyx_app'@'localhost';
 FLUSH PRIVILEGES;
 ```

@@ -101,11 +101,14 @@ opcional: sin `GEMINI_API_KEY` el asistente funciona igual con sus reglas.
 
 ### La forma corta: todo en Docker
 
-Lo único que hace falta es **Docker Desktop** corriendo.
+Lo único que hace falta es **Docker Desktop** corriendo. La primera vez, `preparar-env.ps1` crea
+el `.env` con los secretos al azar: **ninguno tiene un valor escrito en el repositorio**, porque
+sería público. Sin el `.env`, `docker compose` se detiene y dice cuál falta.
 
 ```powershell
 git clone https://github.com/TechnicalBridge/APOFYX.git
 cd APOFYX
+powershell -ExecutionPolicy Bypass -File .\preparar-env.ps1    # una sola vez: el .env con claves al azar
 docker compose --profile app up -d --build --wait
 ```
 
@@ -117,7 +120,7 @@ y carga la [cartera de la demo](#la-cartera-de-la-demo).
 | | |
 | --- | --- |
 | Sitio | http://127.0.0.1:8000/ |
-| Panel del personal | http://127.0.0.1:8000/panel/ · usuario `admin`, clave `apofyx2026` |
+| Panel del personal | http://127.0.0.1:8000/panel/ · `DJANGO_SUPERUSER_USERNAME` y `DJANGO_SUPERUSER_PASSWORD` de tu `.env` |
 | Portal de empresas | http://127.0.0.1:8000/empresas/ · cada empresa crea su cuenta en *Registrar mi empresa* |
 | Admin de Django | http://127.0.0.1:8000/admin/ |
 | Base de datos | `127.0.0.1:3307` · usuario `apofyx_app` |
@@ -130,7 +133,7 @@ Con la imagen no se programa: se levanta la base en Docker y Django en la máqui
 guardar. Hace falta **Docker Desktop** y **Python 3.14**.
 
 ```powershell
-copy .env.example .env
+powershell -ExecutionPolicy Bypass -File .\preparar-env.ps1    # el .env, con claves al azar
 
 docker compose up -d              # solo MySQL 8.4, ya poblado
 
@@ -144,8 +147,11 @@ python manage.py createsuperuser
 python manage.py runserver
 ```
 
-Las credenciales de desarrollo están en `.env.example`. **Cámbialas antes de mostrar esto a
-alguien.**
+Las claves quedan en tu `.env`, que no se sube. Si tu `.env` es de antes y tiene los valores
+que venían en el repositorio, el script los reconoce y avisa; con `-Renovar` los cambia, también
+la del panel en su usuario y las de MySQL dentro de la base, sin perder datos.
+Si una clave se filtró (quedó en una captura o en un registro), `-Cambiar NOMBRE` la cambia aunque
+ya no sea la de antes.
 
 > **`--fake-initial` no es un atajo.** El esquema lo crea `sql/AphofyxDB.sql`, y los modelos son
 > su espejo. Con esa bandera Django reconoce las tablas existentes y las adopta en vez de intentar
@@ -503,16 +509,19 @@ Ningún contenedor corre como root (usuario `apofyx`, uid 10001).
 
 ### Variables de entorno
 
-Todas tienen un valor por omisión, así que el sistema levanta sin configurar nada. Están
-documentadas en [`.env.example`](.env.example).
+Están documentadas en [`.env.example`](.env.example), y `preparar-env.ps1` crea el `.env` desde
+él. **Los secretos no tienen valor por omisión** (los marcados *el `.env`*): si falta uno, APOFYX
+no arranca y dice cuál. Lo demás tiene un valor de desarrollo.
 
 | Variable | Por omisión | Para qué |
 | --- | --- | --- |
-| `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD` | `apofyx_app` / `apofyx_pass` / `rootpass` | La base |
-| `DJANGO_SECRET_KEY` | `dev-inseguro-cambiar` | Firma sesiones y formularios. **Cambiar** |
-| `CIFRADO_LLAVE` | `apofyx-cifrado-dev-cambiar` | Cifra en la base la clave de DataBridge y los secretos de los avisos. Si se cambia, hay que volver a conectar la plataforma y las empresas vuelven a registrar su dirección de avisos. **Cambiar** |
+| `MYSQL_USER` | `apofyx_app` | El usuario de la base |
+| `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD` | el `.env` | Las claves de la base. `DB_PASSWORD` es la misma que `MYSQL_PASSWORD` |
+| `DJANGO_SECRET_KEY` | el `.env` | Firma sesiones y formularios |
+| `CIFRADO_LLAVE` | el `.env` | Cifra en la base la clave de DataBridge y los secretos de los avisos. Si se cambia, hay que volver a conectar la plataforma y las empresas vuelven a registrar su dirección de avisos |
 | `DJANGO_DEBUG_DOCKER` | `0` | Variable propia del contenedor. El `.env` de desarrollo dice `DJANGO_DEBUG=1` y compose lo lee solo; sin esta separación, el contenedor mostraría la traza completa en cada error |
-| `DJANGO_SUPERUSER_USERNAME`, `DJANGO_SUPERUSER_PASSWORD` | `admin` / `apofyx2026` | El usuario del panel. Se crea al arrancar si no existe |
+| `DJANGO_SUPERUSER_USERNAME` | `admin` | El usuario del panel. Se crea al arrancar si no existe |
+| `DJANGO_SUPERUSER_PASSWORD` | el `.env` | Su clave. `preparar-env.ps1 -Renovar` la cambia también en el usuario que ya existe |
 | `WEB_PORT` | `8000` | Dónde queda el sitio |
 | `APOFYX_RUT`, `APOFYX_MORA_MAXIMA` | `77305118-6` / `120` | La identidad de APOFYX en el mandato, y hasta cuántos días de mora cobra |
 | `DATABRIDGE_REENVIO_INMEDIATO` | `1` | Reenviar apenas llega la cartera. Con `0`, solo el despachador |
@@ -633,8 +642,8 @@ diseño con su justificación.
 - **La cobertura no se volvió a medir** en esta revisión; la última medición fue de 90 %.
 - **`v_deuda_features` es para análisis:** convertirla en predicción necesita datos en el tiempo
   ([§10](#10-datos-para-un-modelo)).
-- **Antes de un despliegue público:** cambiar `DJANGO_SECRET_KEY`, `CIFRADO_LLAVE` y las claves de
-  la demo, fijar `DJANGO_ALLOWED_HOSTS` y definir respaldo y retención de datos.
+- **Antes de un despliegue público:** fijar `DJANGO_ALLOWED_HOSTS` y definir respaldo y retención
+  de datos. Los secretos ya no traen un valor conocido: cada instalación genera los suyos.
 - **Los roles del equipo** en [§4](#4-integrantes-del-equipo).
 
 ---
