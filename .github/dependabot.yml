@@ -1,9 +1,17 @@
 # =============================================================================
-#  Dependencias vulnerables — Dependabot
+#  Dependencias al dia — Dependabot
 # =============================================================================
-#  Abre un pull request cuando una dependencia publica una version que corrige
-#  una vulnerabilidad. Django y mysqlclient son los que importan: uno sirve el
-#  sitio y el otro habla con la base.
+#  Django y mysqlclient son los que importan: uno sirve el sitio y el otro
+#  habla con la base.
+#
+#  Las mismas reglas que TB_web, para que llegue lo que sirve y no ruido:
+#    - Las versiones menores y los parches llegan JUNTOS: un pull request por
+#      ecosistema y por semana (o mes), que la CI prueba entero.
+#    - Las versiones MAYORES no llegan solas: cambian la forma de usar la
+#      libreria, son migraciones y se planifican con la plantilla de issue
+#      "Version mayor". Una vulnerabilidad que solo se arregla en una version
+#      mayor igual aparece en la pestana Security, y los pull requests de
+#      seguridad de Dependabot estan activos.
 # =============================================================================
 version: 2
 
@@ -13,6 +21,12 @@ updates:
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
     commit-message: { prefix: "deps" }
+    groups:
+      python:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
 
   #  Las propias acciones de GitHub tambien son codigo de terceros que corre
   #  con permisos sobre el repositorio.
@@ -20,8 +34,20 @@ updates:
     directory: /
     schedule: { interval: monthly }
     commit-message: { prefix: "deps(ci)" }
+    groups:
+      acciones:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: docker
     directory: /
     schedule: { interval: monthly }
     commit-message: { prefix: "deps(docker)" }
+    groups:
+      imagenes:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]

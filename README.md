@@ -195,7 +195,7 @@ En este repositorio, de DevOps se tomaron tres prácticas:
 
 | Práctica | Qué resuelve |
 | --- | --- |
-| **Integración continua** | GitHub Actions levanta MySQL 8.4, **carga el esquema desde el DDL, lo migra con Django y corre todas las pruebas** en cada push. Si una migración no funciona sobre una base recién creada, la CI se cae |
+| **Integración continua** | GitHub Actions levanta MySQL 8.4, **carga el esquema desde el DDL, lo migra con Django y corre todas las pruebas** en cada push. Si una migración no funciona sobre una base recién creada, la CI se cae. **`main` está protegida:** solo entra un PR, con squash y con *Esquema y pruebas* en verde |
 | **El esquema es la fuente** | `sql/AphofyxDB.sql` se escribe a mano y los modelos son su espejo. Hay pruebas que comparan los dos y fallan si se separan |
 | **Infraestructura como código** | Docker Compose levanta la base ya poblada, la aplicación y el despachador; nadie tiene que "instalar MySQL y correr este script" |
 
