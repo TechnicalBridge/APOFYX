@@ -181,8 +181,14 @@ ya no sea la de antes.
 
 ## 5. Metodología de trabajo
 
-**Kanban**, con prácticas de **DevOps** para la entrega. El seguimiento tarea por tarea de los
-tres sistemas está en
+**Scrumban** (los roles de Scrum y el flujo de trabajo de Kanban), con prácticas de **DevOps** para
+la entrega. Los roles, el tablero, las ramas (trunk-based) y la Definition of Done son los mismos en
+los tres sistemas: están
+en el [README de TB_web](https://github.com/TechnicalBridge/TB_web#5-metodología-de-trabajo). Los
+issues de este repositorio se abren con los formularios de `.github/ISSUE_TEMPLATE/` (historia de
+usuario, épica, error, investigación, tarea técnica, decisión y versión mayor) y entran solos al
+[tablero del equipo](https://github.com/orgs/TechnicalBridge/projects/3). El seguimiento tarea por
+tarea de los tres sistemas está en
 [`TB_web/docs/plan-kanban.md`](https://github.com/TechnicalBridge/TB_web/blob/main/docs/plan-kanban.md).
 
 En este repositorio, de DevOps se tomaron tres prácticas:

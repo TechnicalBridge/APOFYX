@@ -1,0 +1,68 @@
+name: Investigación (spike)
+description: Averiguar algo antes de decidir cómo hacerlo, con un tiempo máximo
+title: "spike: "
+type: Task
+labels: [question]
+projects: ["TechnicalBridge/3"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tiene un **tiempo máximo**: al cumplirse se responde con lo que se sabe, aunque no sea todo.
+        Lo que salga de aquí se convierte en historias, tareas o una decisión.
+        **No escribas claves, contraseñas ni datos reales de personas:** este repositorio es público.
+  - type: dropdown
+    id: sistema
+    attributes:
+      label: Sistema
+      description: "Dónde se hace el cambio. Si son varios, márcalos todos."
+      multiple: true
+      options:
+        - "Panel y CRM (crm)"
+        - "Cartera (cartera)"
+        - "Integración con DataBridge y Patrimonio (integracion)"
+        - "Asistente (assistant)"
+        - "Base de datos (sql)"
+        - "CI, Docker o configuración"
+    validations:
+      required: true
+  - type: textarea
+    id: pregunta
+    attributes:
+      label: Qué hay que averiguar
+      placeholder: "¿Cómo confirma Webpay un pago si el deudor cierra la ventana?"
+    validations:
+      required: true
+  - type: textarea
+    id: porque
+    attributes:
+      label: Para qué sirve
+      description: "Qué historia o decisión espera esta respuesta."
+    validations:
+      required: true
+  - type: dropdown
+    id: tiempo
+    attributes:
+      label: Tiempo máximo
+      options:
+        - "Medio día"
+        - "1 día"
+        - "2 días"
+        - "3 días"
+    validations:
+      required: true
+  - type: textarea
+    id: entregable
+    attributes:
+      label: Qué queda al terminar
+      description: "Por ejemplo: un comentario con la respuesta, un prototipo en una rama o los issues que salen de aquí."
+      value: |
+        - [ ] 
+
+    validations:
+      required: true
+  - type: textarea
+    id: fuentes
+    attributes:
+      label: Fuentes
+      description: "Documentación, enlaces o personas a quien preguntar."

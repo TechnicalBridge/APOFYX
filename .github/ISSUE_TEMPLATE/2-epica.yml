@@ -1,0 +1,65 @@
+name: Épica
+description: Algo grande que se entrega en varias historias
+title: "épica: "
+type: Feature
+labels: [enhancement]
+projects: ["TechnicalBridge/3"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Agrupa historias. Después de crearla, agrega cada historia con **Create sub-issue**: el tablero
+        muestra cuántas van terminadas. Se cierra cuando se cumple su criterio, no solo cuando se cierran sus historias.
+        **No escribas claves, contraseñas ni datos reales de personas:** este repositorio es público.
+  - type: dropdown
+    id: sistema
+    attributes:
+      label: Sistema
+      description: "Dónde se hace el cambio. Si son varios, márcalos todos."
+      multiple: true
+      options:
+        - "Panel y CRM (crm)"
+        - "Cartera (cartera)"
+        - "Integración con DataBridge y Patrimonio (integracion)"
+        - "Asistente (assistant)"
+        - "Base de datos (sql)"
+        - "CI, Docker o configuración"
+    validations:
+      required: true
+  - type: textarea
+    id: objetivo
+    attributes:
+      label: Objetivo
+      description: "Qué se logra cuando termine y para quién."
+      placeholder: "Que el deudor que paga antes reciba un descuento en los intereses de mora."
+    validations:
+      required: true
+  - type: textarea
+    id: historias
+    attributes:
+      label: Historias previstas
+      description: "Una línea por historia. Cuando la crees como sub-issue, cambia la línea por su número."
+      value: |
+        - [ ] Contrato: 
+        - [ ] DataBridge: 
+        - [ ] Portal: 
+
+  - type: textarea
+    id: criterio
+    attributes:
+      label: Criterio de la épica
+      description: "Cómo se sabe que la épica entera está terminada."
+      value: |
+        - [ ] 
+
+    validations:
+      required: true
+  - type: textarea
+    id: fuera
+    attributes:
+      label: Fuera de alcance
+  - type: textarea
+    id: riesgos
+    attributes:
+      label: Riesgos y dependencias
+      description: "Lo que puede atrasarla o romper algo, y de quién depende."

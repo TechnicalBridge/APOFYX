@@ -1,0 +1,90 @@
+name: Error
+description: Algo que debería funcionar y no funciona
+title: "fix: "
+type: Bug
+labels: [bug]
+projects: ["TechnicalBridge/3"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Entra solo al tablero del equipo. El título va como `fix(sistema): qué falla`.
+        **Si es una vulnerabilidad de seguridad, no la publiques aquí:** usa *Reportar una vulnerabilidad*, que es privado.
+        **No escribas claves, contraseñas ni datos reales de personas:** este repositorio es público.
+  - type: dropdown
+    id: sistema
+    attributes:
+      label: Sistema
+      description: "Dónde se hace el cambio. Si son varios, márcalos todos."
+      multiple: true
+      options:
+        - "Panel y CRM (crm)"
+        - "Cartera (cartera)"
+        - "Integración con DataBridge y Patrimonio (integracion)"
+        - "Asistente (assistant)"
+        - "Base de datos (sql)"
+        - "CI, Docker o configuración"
+    validations:
+      required: true
+  - type: dropdown
+    id: impacto
+    attributes:
+      label: Qué tanto afecta
+      options:
+        - "Bloquea: no se puede entrar, pagar o cargar cartera"
+        - "Molesta: hay una forma de seguir"
+        - "Detalle: se ve mal o un texto está equivocado"
+    validations:
+      required: true
+  - type: dropdown
+    id: ambiente
+    attributes:
+      label: Dónde pasó
+      options:
+        - "Local, con Docker"
+        - "En la demo"
+        - "En la CI (GitHub Actions)"
+    validations:
+      required: true
+  - type: dropdown
+    id: navegador
+    attributes:
+      label: Navegador
+      options:
+        - "Edge"
+        - "Chrome"
+        - "Firefox"
+        - "Safari"
+        - "Celular Android"
+        - "iPhone"
+        - "No aplica: es la API o el servidor"
+    validations:
+      required: false
+  - type: textarea
+    id: pasos
+    attributes:
+      label: Qué pasa
+      description: "Los pasos para que le pase a cualquiera, y lo que se ve."
+      placeholder: |
+        1. Entrar al portal como deudor.
+        2. Elegir una cuota y pagar con Khipu.
+        3. Volver al portal: dice "El pago no se completó", pero Khipu lo cobró.
+    validations:
+      required: true
+  - type: textarea
+    id: esperado
+    attributes:
+      label: Qué debería pasar
+    validations:
+      required: true
+  - type: textarea
+    id: evidencia
+    attributes:
+      label: Evidencia
+      description: "Capturas, el log o la respuesta de la API. Borra tokens, claves y datos personales antes de pegar."
+  - type: input
+    id: version
+    attributes:
+      label: Commit o versión
+      description: "El commit de main o la rama donde pasó, si lo sabes."
+      placeholder: "0198450"
