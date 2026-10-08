@@ -25,10 +25,10 @@ x-django: &django
   DB_PORT:     3306
   DB_NAME:     ${MYSQL_DATABASE:-apofyx}
   DB_USER:     ${MYSQL_USER:-apofyx_app}
-  DB_PASSWORD: ${MYSQL_PASSWORD:-apofyx_pass}
-  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-inseguro-cambiar}
+  DB_PASSWORD: ${MYSQL_PASSWORD:?Falta MYSQL_PASSWORD en el .env (crealo con preparar-env.ps1)}
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Falta DJANGO_SECRET_KEY en el .env (crealo con preparar-env.ps1)}
   # Cifra en la base la clave de DataBridge y los secretos de los avisos.
-  CIFRADO_LLAVE: ${CIFRADO_LLAVE:-apofyx-cifrado-dev-cambiar}
+  CIFRADO_LLAVE: ${CIFRADO_LLAVE:?Falta CIFRADO_LLAVE en el .env (crealo con preparar-env.ps1)}
   # Variable propia, y no DJANGO_DEBUG: el .env de desarrollo dice 1 y
   # compose lo lee solo, asi que el contenedor terminaba mostrando la
   # traza completa en cada error. Aca manda el 0 salvo que se pida otra
@@ -43,10 +43,10 @@ services:
     restart: unless-stopped
 
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Falta MYSQL_ROOT_PASSWORD en el .env (crealo con preparar-env.ps1)}
       MYSQL_DATABASE:      ${MYSQL_DATABASE:-apofyx}
       MYSQL_USER:          ${MYSQL_USER:-apofyx_app}
-      MYSQL_PASSWORD:      ${MYSQL_PASSWORD:-apofyx_pass}
+      MYSQL_PASSWORD:      ${MYSQL_PASSWORD:?Falta MYSQL_PASSWORD en el .env (crealo con preparar-env.ps1)}
 
     # utf8mb4 explicito: el esquema y los datos llevan acentos y enies.
     command:
@@ -64,8 +64,9 @@ services:
       - ./sql/AphofyxDB.sql:/docker-entrypoint-initdb.d/01-AphofyxDB.sql:ro
 
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1",
-             "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpass}"]
+      #  La clave la lee del propio contenedor: asi no queda en la linea de
+      #  comando, donde la mostraria docker inspect.
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysqladmin ping -h 127.0.0.1 -u root"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -95,7 +96,7 @@ services:
       DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME:-admin}
       # La misma clave que trae .env.example: quien copie la plantilla y
       # quien no tenga .env entran con la misma.
-      DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD:-apofyx2026}
+      DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD:?Falta DJANGO_SUPERUSER_PASSWORD en el .env (crealo con preparar-env.ps1)}
       DJANGO_SUPERUSER_EMAIL:    ${DJANGO_SUPERUSER_EMAIL:-admin@apofyx.cl}
       # La cadena con DataBridge no se configura aqui: se conecta desde el
       # panel (Plataforma), y la conexion queda en la base.

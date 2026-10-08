@@ -4,25 +4,14 @@ on:
   push:
   pull_request:
 
+#  Solo lectura: ningun paso necesita escribir en el repositorio.
+permissions:
+  contents: read
+
 jobs:
   django:
     name: Esquema y pruebas
     runs-on: ubuntu-latest
-
-    # El mismo motor que en desarrollo: MySQL 8.4.
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_ROOT_PASSWORD: rootpass
-          MYSQL_DATABASE: apofyx
-          MYSQL_USER: apofyx_app
-          MYSQL_PASSWORD: apofyx_pass
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -prootpass"
-          --health-interval=5s --health-timeout=5s --health-retries=20
 
     env:
       DB_HOST: 127.0.0.1
@@ -30,11 +19,40 @@ jobs:
       DB_NAME: apofyx
       # root, porque las pruebas crean y borran su propia base (test_apofyx).
       DB_USER: root
-      DB_PASSWORD: rootpass
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      #  Ninguna clave escrita en el repositorio: cada corrida inventa las
+      #  suyas, y GitHub las tapa en el registro.
+      - name: Claves de esta corrida
+        run: |
+          for variable in DB_PASSWORD DJANGO_SECRET_KEY CIFRADO_LLAVE; do
+            valor=$(openssl rand -base64 48 | tr -d '\n/+=')
+            echo "::add-mask::$valor"
+            echo "$variable=$valor" >> "$GITHUB_ENV"
+          done
+
+      # El mismo motor que en desarrollo: MySQL 8.4, con la clave de esta
+      # corrida. Va con docker run y no como servicio del job: un servicio
+      # arranca antes que los pasos y no puede usar una clave que se invento
+      # en uno de ellos.
+      - name: MySQL 8.4
+        run: |
+          docker run -d --name mysql -e MYSQL_ROOT_PASSWORD -e MYSQL_DATABASE=apofyx -p 3306:3306 mysql:8.4
+          for intento in $(seq 1 60); do
+            if docker exec -e MYSQL_PWD mysql mysqladmin ping -h 127.0.0.1 -uroot --silent; then exit 0; fi
+            sleep 2
+          done
+          echo "MySQL no respondio" >&2
+          exit 1
+        env:
+          MYSQL_ROOT_PASSWORD: ${{ env.DB_PASSWORD }}
+          MYSQL_PWD: ${{ env.DB_PASSWORD }}
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.14'
           cache: pip
@@ -46,7 +64,9 @@ jobs:
       # adopta. Si una migracion posterior intentara crear algo que el DDL ya
       # trae, este paso se cae (para eso esta SiFalta, en crm/operaciones.py).
       - name: La base nace de sql/AphofyxDB.sql
-        run: mysql -h 127.0.0.1 -uroot -prootpass --default-character-set=utf8mb4 < sql/AphofyxDB.sql
+        run: mysql -h 127.0.0.1 -uroot --default-character-set=utf8mb4 < sql/AphofyxDB.sql
+        env:
+          MYSQL_PWD: ${{ env.DB_PASSWORD }}
       - name: Y Django la adopta
         run: python manage.py migrate --fake-initial
 
@@ -57,8 +77,10 @@ jobs:
     name: Dependencias vulnerables
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.14'
       # pip-audit resuelve las dependencias con pip para auditar tambien las

@@ -3,10 +3,15 @@ Configuracion de Django para APOFYX.
 
 Nada sensible vive aca: las credenciales se leen del archivo .env, que no se
 versiona. Ver .env.example y docs/APOFYX.md seccion 14.8.
+
+Los secretos no tienen valor por omision: un valor escrito aqui seria publico,
+y quien olvidara cambiarlo quedaria con un secreto que cualquiera puede leer.
+Si falta uno, Django no arranca y dice cual. preparar-env.ps1 los crea al azar.
 """
 
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 import os
 
@@ -20,6 +25,15 @@ def env(name, default=None):
     return os.environ.get(name, default)
 
 
+def env_secreto(name):
+    """Un secreto: sin valor por omision. Si falta, Django no arranca y dice cual."""
+    valor = (os.environ.get(name) or "").strip()
+    if not valor:
+        raise ImproperlyConfigured(
+            f"Falta {name} en el .env. Crealo con preparar-env.ps1, que pone claves al azar.")
+    return valor
+
+
 def env_bool(name, default=False):
     """Interpreta '1', 'true', 'yes', 'on' como verdadero."""
     valor = os.environ.get(name)
@@ -30,7 +44,7 @@ def env_bool(name, default=False):
 
 # --- Seguridad -------------------------------------------------------------
 
-SECRET_KEY = env("DJANGO_SECRET_KEY", "dev-inseguro-cambiar")
+SECRET_KEY = env_secreto("DJANGO_SECRET_KEY")
 DEBUG = env_bool("DJANGO_DEBUG", True)
 
 ALLOWED_HOSTS = [h.strip() for h in env("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
@@ -108,7 +122,7 @@ DATABASES = {
         "ENGINE": "django.db.backends.mysql",
         "NAME": env("DB_NAME", "apofyx"),
         "USER": env("DB_USER", "apofyx_app"),
-        "PASSWORD": env("DB_PASSWORD", "apofyx_pass"),
+        "PASSWORD": env_secreto("DB_PASSWORD"),
         "HOST": env("DB_HOST", "127.0.0.1"),
         "PORT": env("DB_PORT", "3307"),
         "OPTIONS": {
@@ -226,4 +240,4 @@ DATABRIDGE = {
 # Cifra en la base la clave de DataBridge y los secretos de los avisos
 # (integracion/cifrado.py). No se guarda en la base: quien se lleve un respaldo
 # no se lleva los secretos. Si se cambia, hay que volver a conectar.
-CIFRADO_LLAVE = env("CIFRADO_LLAVE", "apofyx-cifrado-dev-cambiar")
+CIFRADO_LLAVE = env_secreto("CIFRADO_LLAVE")
