@@ -1,0 +1,97 @@
+name: Historia de usuario
+description: Algo nuevo que el sistema tiene que hacer, contado desde quien lo usa
+title: "feat: "
+type: Feature
+labels: [enhancement]
+projects: ["TechnicalBridge/3"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Entra sola al tablero del equipo, en **Backlog**. El Product Owner le pone la prioridad y la pasa a
+        **Ready** cuando está lista para tomarse. El título va como `feat(sistema): qué cambia`.
+        Si es grande (más de una semana), mejor una **Épica** con varias historias.
+        **No escribas claves, contraseñas ni datos reales de personas:** este repositorio es público.
+  - type: dropdown
+    id: rol
+    attributes:
+      label: Para quién
+      description: "Quién la necesita: es el *Como…* de la historia."
+      options:
+        - "Personal de APOFYX (panel)"
+        - "Empresa cliente (cuenta de empresa)"
+        - "Deudor"
+        - "Sistema integrado (DataBridge o Patrimonio)"
+        - "Equipo de desarrollo"
+    validations:
+      required: true
+  - type: dropdown
+    id: sistema
+    attributes:
+      label: Sistema
+      description: "Dónde se hace el cambio. Si son varios, márcalos todos."
+      multiple: true
+      options:
+        - "Panel y CRM (crm)"
+        - "Cartera (cartera)"
+        - "Integración con DataBridge y Patrimonio (integracion)"
+        - "Asistente (assistant)"
+        - "Base de datos (sql)"
+        - "CI, Docker o configuración"
+    validations:
+      required: true
+  - type: textarea
+    id: historia
+    attributes:
+      label: Historia de usuario
+      description: "Quién lo necesita, qué necesita y para qué."
+      placeholder: |
+        Como deudor,
+        quiero pagar una cuota desde el celular,
+        para no tener que ir a la oficina.
+    validations:
+      required: true
+  - type: textarea
+    id: problema
+    attributes:
+      label: Problema
+      description: "Qué pasa hoy y por qué es un problema."
+    validations:
+      required: true
+  - type: textarea
+    id: solucion
+    attributes:
+      label: Solución propuesta
+      description: "Qué cambia en cada sistema. Si todavía no está clara, deja lo que se sabe."
+  - type: textarea
+    id: criterio
+    attributes:
+      label: Criterio de aceptación
+      description: "Cómo se sabe que está terminada: una casilla por cada cosa que se pueda comprobar. Sirve el formato *Dado… cuando… entonces…*."
+      value: |
+        - [ ] 
+
+    validations:
+      required: true
+  - type: textarea
+    id: fuera
+    attributes:
+      label: Fuera de alcance
+      description: "Lo que esta historia no hace, para que no crezca sola."
+  - type: input
+    id: depende
+    attributes:
+      label: Depende de
+      description: "Los issues que tienen que estar antes, si hay."
+      placeholder: "#45, TechnicalBridge/APOFYX#14"
+  - type: textarea
+    id: rollback
+    attributes:
+      label: Rollback
+      description: "Cómo se deshace si algo sale mal."
+      placeholder: "Revertir el PR. Lo que ya se guardó queda y..."
+  - type: textarea
+    id: notas
+    attributes:
+      label: Notas
+      description: "Diseño, enlaces, capturas o lo que sirva a quien la tome."

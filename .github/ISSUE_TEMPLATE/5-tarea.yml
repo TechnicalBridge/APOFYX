@@ -1,0 +1,62 @@
+name: Tarea técnica
+description: Mantención, documentación, refactor, pruebas, CI, seguridad o rendimiento
+type: Task
+projects: ["TechnicalBridge/3"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Entra sola al tablero del equipo. El título va como `tipo(sistema): qué hay que hacer`, por ejemplo
+        `docs(readme): Explicar las campañas`.
+        **No escribas claves, contraseñas ni datos reales de personas:** este repositorio es público.
+  - type: dropdown
+    id: tipo
+    attributes:
+      label: Tipo
+      options:
+        - "chore: mantención o configuración"
+        - "docs: documentación"
+        - "refactor: ordenar el código sin cambiar lo que hace"
+        - "test: pruebas"
+        - "ci: integración continua o Docker"
+        - "security: endurecer algo sin un error a la vista"
+        - "perf: rendimiento"
+    validations:
+      required: true
+  - type: dropdown
+    id: sistema
+    attributes:
+      label: Sistema
+      description: "Dónde se hace el cambio. Si son varios, márcalos todos."
+      multiple: true
+      options:
+        - "Panel y CRM (crm)"
+        - "Cartera (cartera)"
+        - "Integración con DataBridge y Patrimonio (integracion)"
+        - "Asistente (assistant)"
+        - "Base de datos (sql)"
+        - "CI, Docker o configuración"
+    validations:
+      required: true
+  - type: textarea
+    id: que
+    attributes:
+      label: Qué hay que hacer y por qué
+    validations:
+      required: true
+  - type: textarea
+    id: terminado
+    attributes:
+      label: Terminada cuando
+      description: "Una casilla por cada cosa que se pueda comprobar."
+      value: |
+        - [ ] 
+
+    validations:
+      required: true
+  - type: input
+    id: depende
+    attributes:
+      label: Depende de
+      description: "Los issues que tienen que estar antes, si hay."
+      placeholder: "#45, TechnicalBridge/APOFYX#14"

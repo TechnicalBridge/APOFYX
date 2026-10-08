@@ -1,0 +1,76 @@
+name: Versión mayor
+description: Planificar una migración que Dependabot deja fuera a propósito
+title: "deps: "
+type: Task
+labels: [dependencies]
+projects: ["TechnicalBridge/3"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Dependabot trae solo las versiones menores y los parches. Cada versión mayor cambia la forma de usar
+        la librería, así que se planifica aquí como una migración.
+        **No escribas claves, contraseñas ni datos reales de personas:** este repositorio es público.
+  - type: dropdown
+    id: sistema
+    attributes:
+      label: Sistema
+      description: "Dónde se hace el cambio. Si son varios, márcalos todos."
+      multiple: true
+      options:
+        - "Panel y CRM (crm)"
+        - "Cartera (cartera)"
+        - "Integración con DataBridge y Patrimonio (integracion)"
+        - "Asistente (assistant)"
+        - "Base de datos (sql)"
+        - "CI, Docker o configuración"
+    validations:
+      required: true
+  - type: input
+    id: dependencia
+    attributes:
+      label: Dependencia
+      placeholder: "Spring Boot"
+    validations:
+      required: true
+  - type: input
+    id: versiones
+    attributes:
+      label: Versión actual y nueva
+      placeholder: "3.5.16 → 4.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: motivo
+    attributes:
+      label: Por qué ahora
+      options:
+        - "Una vulnerabilidad que solo se arregla en la versión nueva"
+        - "La versión actual deja de tener soporte"
+        - "Algo que necesitamos solo está en la versión nueva"
+        - "Mantenerse al día"
+    validations:
+      required: true
+  - type: textarea
+    id: cambios
+    attributes:
+      label: Qué cambia
+      description: "Lo que rompe, con el enlace a la guía de migración o al changelog."
+    validations:
+      required: true
+  - type: textarea
+    id: plan
+    attributes:
+      label: Plan y pruebas
+      value: |
+        - [ ] Rama aparte y PR propio
+        - [ ] Todas las pruebas en verde
+        - [ ] Probado en vivo
+
+    validations:
+      required: true
+  - type: textarea
+    id: rollback
+    attributes:
+      label: Rollback
+      placeholder: "Revertir el PR: la versión anterior vuelve con el lockfile."

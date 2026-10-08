@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Reportar una vulnerabilidad
+    url: https://github.com/TechnicalBridge/APOFYX/security/advisories/new
+    about: En privado, para que no quede pública antes de arreglarla.
+  - name: Tablero del equipo
+    url: https://github.com/orgs/TechnicalBridge/projects/3
+    about: El backlog priorizado y el roadmap de los tres sistemas.

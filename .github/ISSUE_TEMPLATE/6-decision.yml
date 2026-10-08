@@ -1,0 +1,77 @@
+name: Decisión
+description: Un tema que hay que resolver antes de seguir, con sus opciones
+title: "decisión: "
+type: Task
+labels: [question]
+projects: ["TechnicalBridge/3"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Al cerrarla, la decisión queda escrita abajo, en **Qué se decidió**. Si cambia la arquitectura,
+        también va al README.
+        **No escribas claves, contraseñas ni datos reales de personas:** este repositorio es público.
+  - type: dropdown
+    id: sistema
+    attributes:
+      label: Sistema
+      description: "Dónde se hace el cambio. Si son varios, márcalos todos."
+      multiple: true
+      options:
+        - "Panel y CRM (crm)"
+        - "Cartera (cartera)"
+        - "Integración con DataBridge y Patrimonio (integracion)"
+        - "Asistente (assistant)"
+        - "Base de datos (sql)"
+        - "CI, Docker o configuración"
+    validations:
+      required: true
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto
+      description: "Qué pasa y por qué hay que decidir ahora."
+    validations:
+      required: true
+  - type: textarea
+    id: opciones
+    attributes:
+      label: Opciones
+      description: "Cada opción con lo que tiene a favor y en contra."
+      value: |
+        ### A: 
+        - A favor: 
+        - En contra: 
+
+        ### B: 
+        - A favor: 
+        - En contra: 
+
+    validations:
+      required: true
+  - type: textarea
+    id: recomendacion
+    attributes:
+      label: Recomendación
+      description: "Cuál y por qué, si alguien ya tiene una."
+  - type: dropdown
+    id: quien
+    attributes:
+      label: Quién decide
+      options:
+        - "El Product Owner"
+        - "El equipo"
+        - "El Scrum Master"
+        - "El docente o el curso"
+    validations:
+      required: true
+  - type: input
+    id: plazo
+    attributes:
+      label: Para cuándo
+      placeholder: "2026-10-11"
+  - type: textarea
+    id: decidido
+    attributes:
+      label: Qué se decidió
+      description: "Se completa al cerrarla: qué se eligió, por qué y qué issues salen."
