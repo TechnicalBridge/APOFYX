@@ -1864,3 +1864,55 @@ class LaPlataformaEjecutaLaCampana(TestCase):
         error = sincronizar_campana(self.campana, ClienteFalso(caido=True))
 
         self.assertIn("Sin respuesta", error)
+
+
+from .reenvio import datos_del_mandato, sincronizar_mandato  # noqa: E402
+
+
+@override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+class ElMaximoDeDescuentoViajaEnElMandato(TestCase):
+    """Lo que la empresa autoriza condonar llega a DataBridge en el mandato (contrato §7.1)."""
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        self.campana = campana_de(self.acreedor)
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+    def test_el_mandato_lleva_el_maximo_de_la_empresa(self):
+        self.acreedor.max_mora_discount = Decimal("50")
+        self.acreedor.save()
+        cliente = ClienteFalso()
+
+        asegurar_mandato_y_campana(cliente, Batch.objects.get(), self.campana)
+
+        ruta, mandato = cliente.llamadas[0]
+        self.assertEqual(ruta, "/api/v1/mandatos")
+        self.assertEqual(mandato["descuento_maximo_mora"], 50.0)
+
+    def test_sin_maximo_no_lo_manda_y_databridge_entiende_cero(self):
+        self.assertNotIn("descuento_maximo_mora", datos_del_mandato(self.acreedor, date(2026, 9, 1)))
+
+    def test_cambiarlo_se_avisa_con_la_fecha_del_ultimo_mandato(self):
+        Forward.objects.update(status=Forward.Status.SENT)
+        self.acreedor.client_since = None
+        self.acreedor.max_mora_discount = Decimal("100")
+        self.acreedor.save()
+        cliente = ClienteFalso()
+
+        self.assertIs(sincronizar_mandato(self.acreedor, cliente), True)
+
+        ruta, mandato = cliente.llamadas[0]
+        self.assertEqual(ruta, "/api/v1/mandatos")
+        self.assertEqual(mandato["descuento_maximo_mora"], 100.0)
+        self.assertEqual(mandato["vigente_desde"], Batch.objects.get().cut_off.isoformat())
+
+    def test_sin_cartera_entregada_no_hay_nada_que_avisar(self):
+        cliente = ClienteFalso()
+
+        self.assertIsNone(sincronizar_mandato(self.acreedor, cliente))
+        self.assertEqual(cliente.llamadas, [])
+
+    def test_si_databridge_no_responde_lo_dice(self):
+        Forward.objects.update(status=Forward.Status.SENT)
+
+        self.assertIn("Sin respuesta", sincronizar_mandato(self.acreedor, ClienteFalso(caido=True)))

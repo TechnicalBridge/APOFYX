@@ -265,7 +265,7 @@ Nada de esto pasa por la consola ni por el código:
 | **Mi cartera** | Sus entregas, qué pasó con cada deuda y en qué quedó el reenvío a la plataforma de pagos |
 | **Subir cartera** | La planilla CSV del contrato, para una empresa sin sistema. La respuesta sale deuda por deuda |
 | **Conectar mi sistema** | Emitir y revocar sus claves de API, y registrar dónde recibe los avisos |
-| **Mis datos** | Los datos de la empresa y sus contactos |
+| **Mis datos** | Los datos de la empresa y sus contactos, y el **descuento máximo** que autoriza sobre los intereses de mora: es su plata, así que lo fija ella y el personal solo lo ve en la ficha |
 
 El personal entra por `/panel/`, que exige `is_staff`: una cuenta de empresa no lo ve. Las sesiones
 de los dos se guardan en la base (`django_session`) y duran 8 horas.
@@ -312,7 +312,9 @@ de un contenedor, `localhost` es el propio contenedor.
 Cada entrega aceptada se reenvía a DataBridge en el mismo formato, con el mandato de APOFYX y la
 campaña agregados. Los montos, los cargos y los ids de deuda no se tocan. El mandato lleva la razón
 social y el nombre de la empresa, así que **DataBridge registra solo a un acreedor que no
-conocía**.
+conocía**. También lleva el descuento máximo que autoriza la empresa (`descuento_maximo_mora`): si
+lo cambia en su portal, DataBridge se entera al instante, y si no responde, se le vuelve a informar
+con la próxima cartera.
 
 El reenvío pasa por una **bandeja de salida** (`integracion_forward`), así que el acreedor recibe
 su respuesta aunque DataBridge esté caído. El primer intento sale apenas llega la cartera. Lo que no
@@ -546,7 +548,7 @@ La conexión con DataBridge no va en variables: se hace en **Panel → Plataform
 python manage.py test
 ```
 
-**393 pruebas**, contra MySQL 8.4 (2 se omiten cuando el repositorio de TB_web no está al lado).
+**404 pruebas**, contra MySQL 8.4 (2 se omiten cuando el repositorio de TB_web no está al lado).
 Django crea una base aparte (`test_apofyx`) y la borra al terminar; el permiso para hacerlo lo
 otorga la Parte 5 de `sql/AphofyxDB.sql`.
 
@@ -637,7 +639,7 @@ diseño con su justificación.
 
 | Verificación | Resultado |
 | --- | --- |
-| Suite Django contra MySQL 8.4 | **393 pruebas**, sin fallos |
+| Suite Django contra MySQL 8.4 | **404 pruebas**, sin fallos |
 | Migraciones | `makemigrations --check` sin cambios pendientes; la `0007` aplicada sobre una base con datos cifró la conexión y las suscripciones existentes |
 | Contenedores | `apofyx-web` sano y `apofyx-despachador` revisando las bandejas cada 60 segundos |
 | Cadena completa | 16 de 16 comprobaciones con Patrimonio y DataBridge reconstruidos: la cartera llega y se reenvía, la disputa y su resolución pasan por APOFYX hasta el acreedor, y el pago vuelve |

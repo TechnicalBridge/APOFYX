@@ -117,6 +117,25 @@ class CreditorForm(forms.ModelForm):
         return rut_limpio(self.cleaned_data["tax_id"])
 
 
+class DescuentoMaximoForm(forms.ModelForm):
+    """
+    Lo que la empresa autoriza condonar de los intereses de mora, desde su
+    portal. Es su plata: el personal lo ve en la ficha, pero no lo cambia.
+    """
+
+    class Meta:
+        model = Creditor
+        fields = ["max_mora_discount"]
+        labels = {"max_mora_discount": "Descuento máximo que autorizo sobre los intereses de mora (%)"}
+        widgets = {"max_mora_discount": forms.NumberInput(attrs={"min": 0, "max": 100, "step": "0.01",
+                                                                "placeholder": "0"})}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["max_mora_discount"].required = False
+        _aplicar_clases(self.fields)
+
+
 class CreditorContactForm(forms.ModelForm):
     """Alta y edicion de contactos. La empresa la fija la vista, no el usuario."""
 

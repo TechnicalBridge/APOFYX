@@ -27,7 +27,9 @@ from cartera.models import Batch
 from integracion import planilla
 from integracion.intake import CarteraInvalida, recibir_cartera
 from integracion.models import ApiKey, OutboundEvent, Subscription
-from .forms import CreditorContactForm, EntrarEmpresaForm, RegistroEmpresaForm, SubirCarteraForm
+from integracion.reenvio import sincronizar_mandato
+from .forms import (CreditorContactForm, DescuentoMaximoForm, EntrarEmpresaForm, RegistroEmpresaForm,
+                    SubirCarteraForm)
 from .models import Creditor, CreditorContact
 from .panel_views import cartera_recibida
 
@@ -166,10 +168,31 @@ def _proximo_lote(empresa, corte):
 
 @empresa_requerida
 def datos(request):
-    """Los datos de la empresa y sus contactos."""
+    """
+    Los datos de la empresa, sus contactos y lo que autoriza condonar de la
+    mora. Si cambia ese maximo, DataBridge se entera al instante: desde ese
+    momento ninguna campana ofrece mas que eso.
+    """
+    empresa = request.empresa
+    antes = empresa.max_mora_discount
+    form = DescuentoMaximoForm(request.POST or None, instance=empresa)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        if empresa.max_mora_discount == antes:
+            messages.success(request, "Guardado.")
+        else:
+            avisado = sincronizar_mandato(empresa)
+            if avisado is True:
+                messages.success(request, "Guardado. DataBridge ya lo sabe: desde ahora ninguna campaña ofrece más que eso.")
+            elif avisado is None:
+                messages.success(request, "Guardado. DataBridge lo recibe con su primera cartera.")
+            else:
+                messages.warning(request, "Guardado, pero DataBridge no respondió: se le vuelve a informar con su "
+                                          "próxima cartera.")
+        return redirect("portal:datos")
     return render(request, "portal/datos.html", {
-        "activo": "datos", "empresa": request.empresa,
-        "contactos": request.empresa.contacts.all(),
+        "activo": "datos", "empresa": empresa, "form_descuento": form,
+        "contactos": empresa.contacts.all(),
     })
 
 

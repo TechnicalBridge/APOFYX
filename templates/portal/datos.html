@@ -19,6 +19,22 @@
             </tbody>
         </table>
         <p class="ap-micro">Para cambiar estos datos, escríbanos a contacto@apofyx.cl.</p>
+
+        <h2 class="ap-h3 mb-2 mt-5" id="descuento">Descuento por pronto pago</h2>
+        <p class="ap-nota">
+            Cuánto de los intereses de mora autoriza condonar a un deudor que paga toda su deuda de una vez.
+            <strong>Es plata de su empresa:</strong> nuestras campañas ofrecen hasta este máximo, y nunca tocan el
+            capital. Vacío o 0: ninguna campaña ofrece descuento.
+        </p>
+        <form method="post" action="{% url 'portal:datos' %}#descuento" novalidate>
+            {% csrf_token %}
+            {% with campo=form_descuento.max_mora_discount %}
+            <label class="form-label" for="{{ campo.id_for_label }}">{{ campo.label }}</label>
+            {{ campo }}
+            {% for error in campo.errors %}<div class="ap-error mt-1">{{ error }}</div>{% endfor %}
+            {% endwith %}
+            <button class="btn btn-ap mt-3" type="submit">Guardar</button>
+        </form>
     </div>
 
     <div class="col-lg-7">
