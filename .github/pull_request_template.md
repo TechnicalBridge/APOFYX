@@ -18,10 +18,12 @@ Closes #
 
 ## Definition of Done
 
-- [ ] Cumple el criterio de aceptación del issue.
-- [ ] Trae sus pruebas, y todas pasan en local y en la CI.
-- [ ] Si toca pantallas: probado en el navegador completando cada acción y en el ancho de un celular.
-- [ ] El README y el contrato de integración están al día si cambia algo que otro sistema usa.
-- [ ] Ningún secreto ni clave en el código, en el README ni en los commits.
-- [ ] La rama salió de main hace uno o dos días y está al día con main.
-- [ ] Se mergea con squash, con el título del PR.
+<!-- La del Informe Fase 2: se marca cada condición que cumple este PR. -->
+
+- [ ] **Cumplimiento funcional:** satisface los criterios de aceptación de su issue.
+- [ ] **Verificación:** las pruebas del cambio pasan, y lo relacionado sigue funcionando.
+- [ ] **Validación de interfaz:** si cambia pantallas, se recorrió completo en el navegador, en escritorio, en el ancho de un teléfono y en los temas que tenga.
+- [ ] **Seguridad:** respeta los permisos, y no trae credenciales, claves ni datos sensibles en el código, la documentación ni las evidencias.
+- [ ] **Integración:** sigue siendo compatible con los servicios y contratos que toca, con el manejo de errores y reintentos que corresponda.
+- [ ] **Documentación:** el README y los documentos o contratos afectados están al día.
+- [ ] **Revisión y entrega:** tiene revisión, pasa la CI y entra a `main` con squash, con la evidencia de su validación en este PR.
