@@ -356,14 +356,16 @@ En la ficha de la empresa, **Nueva campaña** pide:
 | **Intentos** | Cuántos correos recibe cada deudor, como máximo |
 | **Cadencia** | Los días, contados desde que la deuda entra a la campaña, en que sale cada correo: `1, 4, 11, 25, 45` (vacía, esa misma). Van de menor a mayor, hasta 10, y al menos tantos como intentos |
 | **Inicio y fin** | Fuera de esas fechas no se contacta |
+| **Descuento por pronto pago** | El % de los intereses de mora que se condona a quien paga toda su deuda de una vez, según lo atrasada que está: 1 a 30, 31 a 90 y 91 a 120 días. Una campaña nueva propone 0, 50 y 100, **recortados al máximo que autoriza la empresa** en su portal; sin máximo, quedan en 0. Se cambia desde la ficha de la empresa |
 
 La ley (Ley 19.496, art. 37) permite escribirle a un deudor **como máximo dos veces por semana, con
 dos días entre una y otra**, de lunes a sábado de 8:00 a 20:00 y nunca un feriado. Si la cadencia
 pone dos correos más seguidos, el panel lo advierte al guardar, y DataBridge manda el que no cabe en
 cuanto puede.
 
-La campaña viaja a DataBridge con la primera entrega, con su cadencia y su estado. Después,
-**pausarla, reanudarla o terminarla en el panel le llega al instante a DataBridge**. Si DataBridge
+La campaña viaja a DataBridge con la primera entrega, con su cadencia, su estado y su descuento.
+Después, **pausarla, reanudarla, terminarla o cambiarle el descuento en el panel le llega al instante
+a DataBridge**. Si DataBridge
 no responde, el panel lo avisa, y el próximo reenvío lo repite. Una deuda pagada, repactada,
 disputada o retirada deja de recibir los correos de la campaña.
 
@@ -548,14 +550,14 @@ La conexión con DataBridge no va en variables: se hace en **Panel → Plataform
 python manage.py test
 ```
 
-**404 pruebas**, contra MySQL 8.4 (2 se omiten cuando el repositorio de TB_web no está al lado).
+**417 pruebas**, contra MySQL 8.4 (2 se omiten cuando el repositorio de TB_web no está al lado).
 Django crea una base aparte (`test_apofyx`) y la borra al terminar; el permiso para hacerlo lo
 otorga la Parte 5 de `sql/AphofyxDB.sql`.
 
 | Tipo | Qué cubre |
 | --- | --- |
 | **Unitarias** | El motor del asistente, el cálculo de mora y tramo, el módulo 11 del RUT, la firma HMAC de los eventos, el cifrado de los secretos, los formularios |
-| **De integración** | Las vistas del sitio, del panel y del portal de empresas (registro, aprobación, login, claves, planilla CSV); la conexión con la plataforma desde el panel, con la ayuda cuando alguien pone `localhost`; la ingesta de cartera (aceptación parcial, idempotencia, retiros, clientes al día); el reenvío a DataBridge con su bandeja y el despachador que reintenta; la reapertura de una deuda pagada y la devolución por mora; la disputa de punta a punta (disputada, reanudada con y sin convenio, retirada) y que sus avisos le lleguen al acreedor; la tasa de interés que viaja con la deuda, por la API y por la planilla; la campaña con su cadencia y su estado, y que pausarla llegue a DataBridge; la migración que cifra lo que estaba en claro y su vuelta atrás; la cartera de la demo |
+| **De integración** | Las vistas del sitio, del panel y del portal de empresas (registro, aprobación, login, claves, planilla CSV); la conexión con la plataforma desde el panel, con la ayuda cuando alguien pone `localhost`; la ingesta de cartera (aceptación parcial, idempotencia, retiros, clientes al día); el reenvío a DataBridge con su bandeja y el despachador que reintenta; la reapertura de una deuda pagada y la devolución por mora; la disputa de punta a punta (disputada, reanudada con y sin convenio, retirada) y que sus avisos le lleguen al acreedor; la tasa de interés que viaja con la deuda, por la API y por la planilla; la campaña con su cadencia y su estado, y que pausarla llegue a DataBridge; el descuento máximo de la empresa y el de cada campaña, recortado a ese máximo, que viajan a DataBridge y se sincronizan al cambiarlos, y lo condonado de cada pago en la cartera; la migración que cifra lo que estaba en claro y su vuelta atrás; la cartera de la demo |
 | **De esquema** | Comparan `sql/AphofyxDB.sql` con los modelos: si un `ENUM` del DDL y las opciones del modelo dejan de decir lo mismo, la prueba falla. Django arma la base de pruebas desde las migraciones y no desde el DDL, así que es la única forma de detectar esa separación |
 
 Ninguna prueba llama a la API de Gemini: el respaldo con modelo se simula. Se verifica que el motor
@@ -639,10 +641,11 @@ diseño con su justificación.
 
 | Verificación | Resultado |
 | --- | --- |
-| Suite Django contra MySQL 8.4 | **404 pruebas**, sin fallos |
+| Suite Django contra MySQL 8.4 | **417 pruebas**, sin fallos |
 | Migraciones | `makemigrations --check` sin cambios pendientes; la `0007` aplicada sobre una base con datos cifró la conexión y las suscripciones existentes |
 | Contenedores | `apofyx-web` sano y `apofyx-despachador` revisando las bandejas cada 60 segundos |
 | Cadena completa | 16 de 16 comprobaciones con Patrimonio y DataBridge reconstruidos: la cartera llega y se reenvía, la disputa y su resolución pasan por APOFYX hasta el acreedor, y el pago vuelve |
+| Descuento por pronto pago, en vivo | De punta a punta con los tres sistemas: un contrato de Patrimonio al 2% con tres arriendos de $300.000 atrasados 62, 31 y 1 día llegó por APOFYX a DataBridge. En la ficha se le puso 0/50/100 a la campaña y DataBridge lo recibió al instante. El deudor vio *te descontamos $9.400*, pagó $909.400 con Webpay, y el pago volvió por la cadena: Patrimonio dejó el contrato en $0 con $9.400 de intereses cobrados y $9.400 condonados, y la cartera de APOFYX muestra lo condonado |
 | Intereses y campañas, en vivo | La tasa de un contrato de Patrimonio pasó por APOFYX a DataBridge, que cobró la mora con Khipu real, y el pago volvió con el capital y el interés separados. En Edge: la campaña nueva con cadencia y solo correo, con la advertencia de la ley; pausarla y reanudarla en el panel la pausó y la reanudó en DataBridge, y pausada no mandó más correos |
 
 **Lo que no está:**

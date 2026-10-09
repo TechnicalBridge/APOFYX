@@ -17,7 +17,13 @@
             {% for error in form.non_field_errors %}<p class="ap-aviso ap-aviso--error">{{ error }}</p>{% endfor %}
             <div class="row g-4">
                 {% for campo in form %}
-                <div class="{% if campo.name == 'name' or campo.name == 'channels' %}col-12{% else %}col-md-6{% endif %}">
+                {% if campo.name == 'descuento_1_30' %}
+                <div class="col-12 pt-2">
+                    <h2 class="ap-h3 mb-1">Descuento por pronto pago</h2>
+                    <p class="ap-micro mb-0">{{ form.explicacion_descuento }}</p>
+                </div>
+                {% endif %}
+                <div class="{% if campo.name == 'name' or campo.name == 'channels' %}col-12{% elif campo.name|slice:':10' == 'descuento_' %}col-md-4{% else %}col-md-6{% endif %}">
                     <label class="form-label" for="{{ campo.id_for_label }}">
                         {{ campo.label|capfirst }}{% if campo.field.required %} <span style="color: var(--ap-oro)">*</span>{% endif %}
                     </label>
