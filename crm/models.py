@@ -195,6 +195,12 @@ class Campaign(models.Model):
         "cadencia (dias)", null=True, blank=True,
         help_text="El dia en que sale cada toque, contado desde que la deuda entra. Vacia: 1, 4, 11, 25, 45.",
     )
+    #  Nunca pasa el maximo que autoriza la empresa (Creditor.max_mora_discount).
+    mora_discount = models.JSONField(
+        "descuento por tramo", null=True, blank=True,
+        help_text='El % de los intereses de mora que se condona a quien paga toda la deuda, por tramo: '
+                  '{"1-30": 0, "31-90": 50, "91-120": 100}. Vacio: sin descuento.',
+    )
     contact_attempts = models.PositiveSmallIntegerField(
         "intentos de contacto", default=3,
         help_text="Cuantas veces se le escribe a cada deudor durante la campana.",

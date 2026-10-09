@@ -241,6 +241,9 @@ CREATE TABLE crm_campaign (
     contact_attempts   SMALLINT UNSIGNED NOT NULL DEFAULT 3,
     -- El dia en que sale cada toque, desde que la deuda entra. NULL: 1, 4, 11, 25, 45.
     cadence_days  JSON                  NULL,
+    -- El % de los intereses de mora que se condona a quien paga toda la deuda, por
+    -- tramo: {"1-30": 0, "31-90": 50, "91-120": 100}. NULL: sin descuento.
+    mora_discount JSON                  NULL,
     created_at    DATETIME(6)       NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at    DATETIME(6)       NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
                                              ON UPDATE CURRENT_TIMESTAMP(6),

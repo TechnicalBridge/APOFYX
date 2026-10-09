@@ -1610,3 +1610,89 @@ class DescuentoMaximoDeLaEmpresaTest(TestCase):
         self.assertContains(r, "50% de la mora")
         self.assertContains(r, "Lo fija la empresa en su portal")
         self.assertNotIn("max_mora_discount", CreditorForm().fields)
+
+
+from integracion.models import InboundEvent  # noqa: E402
+from .panel_views import cartera_recibida  # noqa: E402
+from .forms import CampanaForm  # noqa: E402
+
+
+class DescuentoDeLaCampanaTest(TestCase):
+    """Cada campana ofrece un descuento por tramo, sin pasar lo que autoriza la empresa."""
+
+    def setUp(self):
+        personal(self.client)
+        self.empresa = crear_empresa(max_mora_discount=Decimal("100"))
+
+    def _campana(self, **extra):
+        return Campaign.objects.create(creditor=self.empresa, name="Arriendos", starts_on=date(2026, 10, 1),
+                                       status=Campaign.Status.RUNNING, **extra)
+
+    def test_una_campana_nueva_propone_0_50_y_100_recortados_al_maximo(self):
+        self.assertEqual([CampanaForm(empresa=self.empresa).initial[c] for c in
+                          ("descuento_1_30", "descuento_31_90", "descuento_91_120")], [0, 50, 100])
+        self.empresa.max_mora_discount = Decimal("50")
+        self.assertEqual([CampanaForm(empresa=self.empresa).initial[c] for c in
+                          ("descuento_1_30", "descuento_31_90", "descuento_91_120")], [0, 50, 50])
+
+    def test_sin_maximo_autorizado_los_tramos_quedan_en_0_y_no_se_cambian(self):
+        self.empresa.max_mora_discount = None
+        form = CampanaForm(empresa=self.empresa)
+        self.assertTrue(form.fields["descuento_91_120"].disabled)
+        self.assertEqual(form.initial["descuento_91_120"], 0)
+        self.assertIn("no autorizó descuento", form.explicacion_descuento)
+
+    def test_crear_la_campana_guarda_su_descuento(self):
+        self.client.post(reverse("panel:campana_nueva", args=[self.empresa.pk]), {
+            "name": "Arriendos octubre", "starts_on": "2026-10-01", "status": "running",
+            "channels": ["email"], "contact_attempts": 3, "cadencia": "1, 4, 11",
+            "descuento_1_30": "0", "descuento_31_90": "50", "descuento_91_120": "100",
+        })
+        campana = self.empresa.campaigns.get()
+        self.assertEqual(campana.mora_discount, {"1-30": 0.0, "31-90": 50.0, "91-120": 100.0})
+
+    def test_un_descuento_sobre_el_maximo_no_se_guarda(self):
+        self.empresa.max_mora_discount = Decimal("50")
+        self.empresa.save()
+        r = self.client.post(reverse("panel:campana_nueva", args=[self.empresa.pk]), {
+            "name": "Arriendos octubre", "starts_on": "2026-10-01", "status": "running",
+            "channels": ["email"], "contact_attempts": 3,
+            "descuento_1_30": "0", "descuento_31_90": "50", "descuento_91_120": "100",
+        })
+        self.assertContains(r, "La empresa autoriza hasta 50%.")
+        self.assertFalse(self.empresa.campaigns.exists())
+
+    def test_cambiar_el_descuento_desde_la_ficha_avisa_a_databridge(self):
+        campana = self._campana(mora_discount={"1-30": 0, "31-90": 50, "91-120": 100})
+        with mock.patch("integracion.reenvio.sincronizar_campana", return_value=True) as avisar:
+            self.client.post(reverse("panel:campana_descuento", args=[self.empresa.pk, campana.pk]),
+                             {"descuento_1_30": "0", "descuento_31_90": "30", "descuento_91_120": "60"})
+        campana.refresh_from_db()
+        self.assertEqual(campana.mora_discount, {"1-30": 0.0, "31-90": 30.0, "91-120": 60.0})
+        avisar.assert_called_once()
+
+    def test_cambiarlo_sobre_el_maximo_se_rechaza_y_no_cambia_nada(self):
+        self.empresa.max_mora_discount = Decimal("50")
+        self.empresa.save()
+        campana = self._campana(mora_discount={"31-90": 50})
+        r = self.client.post(reverse("panel:campana_descuento", args=[self.empresa.pk, campana.pk]),
+                             {"descuento_1_30": "0", "descuento_31_90": "80", "descuento_91_120": "0"}, follow=True)
+        self.assertContains(r, "La empresa autoriza hasta 50%.")
+        campana.refresh_from_db()
+        self.assertEqual(campana.mora_discount, {"31-90": 50})
+
+    def test_la_ficha_muestra_el_descuento_de_cada_campana(self):
+        self._campana(mora_discount={"1-30": 0, "31-90": 50, "91-120": 100})
+        r = self.client.get(reverse("panel:cliente_detalle", args=[self.empresa.pk]))
+        self.assertContains(r, "0% · 50% · 100%")
+        self.assertContains(r, "Cambiar el descuento")
+
+    def test_la_cartera_muestra_lo_condonado_por_pronto_pago(self):
+        dar_cartera(self.empresa, [300000])
+        deuda = Debt.objects.get(creditor=self.empresa)
+        InboundEvent.objects.create(event_id="evt_desc", type="pago.confirmado", debt=deuda, result="pago anotado",
+                                    payload={"tipo": "pago.confirmado", "datos": {"descuento": 9400}})
+
+        self.assertEqual(cartera_recibida(self.empresa)["deudas"][0]["condonado"], Decimal("9400"))
+        r = self.client.get(reverse("panel:cliente_detalle", args=[self.empresa.pk]))
+        self.assertContains(r, "de intereses condonados")

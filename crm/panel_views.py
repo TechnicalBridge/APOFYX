@@ -12,6 +12,7 @@ panel, aunque haya iniciado sesion.
 """
 
 from collections import Counter
+from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test
@@ -25,9 +26,10 @@ from django.views.decorators.http import require_POST
 
 from assistant.models import Conversation, Message
 from cartera.models import Batch, Debt, DebtCharge
-from integracion.models import Forward
+from integracion.models import Forward, InboundEvent
 from integracion.plataforma import ConexionFallida, conectar, conexion, desconectar, direccion_de_avisos
-from .forms import CampanaForm, ConexionPlataformaForm, CreditorContactForm, CreditorForm
+from .forms import (TRAMOS_DESCUENTO, CampanaForm, ConexionPlataformaForm, CreditorContactForm, CreditorForm,
+                    DescuentoCampanaForm)
 from .models import (
     Campaign, CampaignFunnelSnapshot, Creditor, CreditorContact, Lead,
 )
@@ -119,6 +121,23 @@ def adjuntar_cartera(empresas):
     return empresas
 
 
+def condonado_por_deuda(empresa):
+    """
+    Los intereses de mora que se condonaron por pronto pago, por deuda: los
+    trae cada pago.confirmado en `descuento` (contrato §8.2).
+    """
+    condonado = Counter()
+    pagos = InboundEvent.objects.filter(type="pago.confirmado", debt__creditor=empresa).only("debt_id", "payload")
+    for pago in pagos:
+        try:
+            valor = Decimal(str(((pago.payload or {}).get("datos") or {}).get("descuento") or 0))
+        except InvalidOperation:
+            continue
+        if valor > 0:
+            condonado[pago.debt_id] += valor
+    return condonado
+
+
 def cartera_recibida(empresa):
     """
     La cartera que el cliente entrego: sus entregas, que paso con cada deuda y
@@ -133,6 +152,7 @@ def cartera_recibida(empresa):
         entrega.reenvio = getattr(entrega, "forward", None)
     deudas = (Debt.objects.filter(creditor=empresa).select_related("debtor", "last_batch")
               .prefetch_related("charges").order_by("status", "external_id"))
+    condonado = condonado_por_deuda(empresa)
     por_estado = Counter()
     informado = {Debt.Currency.CLP: 0, Debt.Currency.UF: 0}
     filas = []
@@ -148,6 +168,7 @@ def cartera_recibida(empresa):
             "deuda": deuda, "saldo": saldo, "en_gestion": en_gestion,
             "estado": estado_de(deuda),
             "mora": (deuda.last_batch.cut_off - mas_antiguo).days,
+            "condonado": condonado.get(deuda.pk),
         })
     estados = [(etiqueta, por_estado[valor]) for valor, etiqueta in ESTADOS_EN_PANEL]
     if por_estado[Debt.Status.DISPUTED]:
@@ -262,7 +283,9 @@ def cliente_detalle(request, pk):
     # El embudo de cada campana viene de la propiedad del modelo, que ya suma
     # sus mediciones y calcula las tasas.
     campanas = [
-        {"campana": c, "embudo": c.embudo}
+        {"campana": c, "embudo": c.embudo,
+         "descuento": [((c.mora_discount or {}).get(t, 0), etiqueta) for t, etiqueta in TRAMOS_DESCUENTO],
+         "form_descuento": DescuentoCampanaForm(empresa=empresa, campana=c, auto_id=f"d{c.pk}_%s")}
         for c in empresa.campaigns.all().order_by("-starts_on")
     ]
 
@@ -463,7 +486,7 @@ def campana_nueva(request, pk):
     campana y la empresa ahora tiene exactamente una en curso, sale sola.
     """
     empresa = get_object_or_404(Creditor, pk=pk)
-    form = CampanaForm(request.POST or None)
+    form = CampanaForm(request.POST or None, empresa=empresa)
     if request.method == "POST" and form.is_valid():
         campana = form.save(commit=False)
         campana.creditor = empresa
@@ -504,6 +527,32 @@ def campana_estado(request, pk, campana_pk):
                                       f"cartera. ({error})")
         if nuevo == Campaign.Status.RUNNING:
             _despachar_esperando(request, empresa)
+    return redirect("panel:cliente_detalle", pk=empresa.pk)
+
+
+@personal_requerido
+@require_POST
+def campana_descuento(request, pk, campana_pk):
+    """
+    Cambia el descuento por tramo de una campana. Nunca pasa lo que autoriza la
+    empresa, y DataBridge, que lo aplica al cobrar, se entera al instante.
+    """
+    empresa = get_object_or_404(Creditor, pk=pk)
+    campana = get_object_or_404(Campaign, pk=campana_pk, creditor=empresa)
+    form = DescuentoCampanaForm(request.POST, empresa=empresa, campana=campana)
+    if not form.is_valid():
+        errores = [e for lista in form.errors.values() for e in lista]
+        messages.error(request, f"No se guardó el descuento de {campana.name}: {errores[0]}")
+        return redirect("panel:cliente_detalle", pk=empresa.pk)
+    campana.mora_discount = form.descuento()
+    campana.save(update_fields=["mora_discount", "updated_at"])
+    messages.success(request, f"El descuento de {campana.name} quedó guardado.")
+    from integracion.reenvio import sincronizar_campana
+
+    error = sincronizar_campana(campana)
+    if isinstance(error, str):
+        messages.warning(request, "No se pudo avisar a la plataforma de pagos: se le avisa con la próxima "
+                                  f"cartera. ({error})")
     return redirect("panel:cliente_detalle", pk=empresa.pk)
 
 
