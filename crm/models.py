@@ -17,9 +17,12 @@ tenga cobros atrasados, y el rubro no cambia nada de como se cobra.
 """
 
 from django.conf import settings
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 from .campos import Categoria
+
+DESCUENTO_FUERA_DE_RANGO = "El descuento es un porcentaje de 0 a 100."
 
 
 class Creditor(models.Model):
@@ -54,6 +57,13 @@ class Creditor(models.Model):
     region = models.CharField("region", max_length=80, blank=True, null=True)
     website = models.URLField("sitio web", max_length=200, blank=True, null=True)
     internal_notes = models.TextField("notas internas", blank=True, null=True)
+    #  Sale de la plata de la empresa: ella lo fija en su portal, no el personal.
+    max_mora_discount = models.DecimalField(
+        "descuento maximo sobre la mora (%)", max_digits=5, decimal_places=2, blank=True, null=True,
+        validators=[MinValueValidator(0, DESCUENTO_FUERA_DE_RANGO), MaxValueValidator(100, DESCUENTO_FUERA_DE_RANGO)],
+        help_text="El % de los intereses de mora que la empresa autoriza condonar a quien paga toda su deuda. "
+                  "Vacio: ninguno.",
+    )
     created_at = models.DateTimeField("creado", auto_now_add=True)
     updated_at = models.DateTimeField("actualizado", auto_now=True)
 
@@ -65,6 +75,13 @@ class Creditor(models.Model):
         indexes = [
             models.Index(fields=["status"], name="ix_creditor_status"),
             models.Index(fields=["trade_name"], name="ix_creditor_trade"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(max_mora_discount__isnull=True)
+                | models.Q(max_mora_discount__gte=0, max_mora_discount__lte=100),
+                name="ck_creditor_mora_discount",
+            ),
         ]
 
     def __str__(self):

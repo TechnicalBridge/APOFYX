@@ -34,6 +34,13 @@
                 <tr><th>Comuna</th><td>{{ empresa.commune|default:"—" }}{% if empresa.region %}, {{ empresa.region }}{% endif %}</td></tr>
                 <tr><th>Alta</th><td>{{ empresa.client_since|date:"d/m/Y"|default:"—" }}</td></tr>
                 <tr>
+                    <th>Descuento máximo</th>
+                    <td>
+                        {% if empresa.max_mora_discount %}{{ empresa.max_mora_discount|floatformat:"-2" }}% de la mora{% else %}No autoriza{% endif %}
+                        <span class="ap-micro d-block">Lo fija la empresa en su portal</span>
+                    </td>
+                </tr>
+                <tr>
                     <th>Sitio</th>
                     <td>
                         {% if empresa.website %}

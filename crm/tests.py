@@ -1193,6 +1193,11 @@ class EsquemaYModelosCalzan(TestCase):
                     " con el error 3819 al guardar.",
                 )
 
+    def test_el_check_del_descuento_va_de_0_a_100_como_el_modelo(self):
+        clausula = self.clausula("ck_creditor_mora_discount")
+        self.assertIn("max_mora_discount >= 0", clausula)
+        self.assertIn("max_mora_discount <= 100", clausula)
+
     def test_el_check_del_rut_acepta_el_formato_que_deja_pasar_el_formulario(self):
         """
         El formulario normaliza a '76543210-3' y la base tiene que aceptar eso
@@ -1556,3 +1561,52 @@ class PanelApruebaYOrganizaTest(TestCase):
                          {"estado": "finished"})
         campana.refresh_from_db()
         self.assertEqual(campana.status, Campaign.Status.FINISHED)
+
+
+class DescuentoMaximoDeLaEmpresaTest(TestCase):
+    """El descuento por pronto pago sale de la plata de la empresa: ella fija su maximo."""
+
+    def setUp(self):
+        self.empresa, self.contacto = empresa_con_acceso(self.client)
+
+    def test_la_empresa_guarda_su_maximo_en_mis_datos(self):
+        with mock.patch("crm.portal_views.sincronizar_mandato", return_value=None):
+            r = self.client.post(reverse("portal:datos"), {"max_mora_discount": "50"}, follow=True)
+
+        self.empresa.refresh_from_db()
+        self.assertEqual(self.empresa.max_mora_discount, Decimal("50"))
+        self.assertContains(r, "Guardado")
+        self.assertContains(r, "Es plata de su empresa")
+
+    def test_un_maximo_fuera_de_0_a_100_se_rechaza_con_un_mensaje_claro(self):
+        for malo in ("150", "-5"):
+            r = self.client.post(reverse("portal:datos"), {"max_mora_discount": malo})
+            self.assertContains(r, "El descuento es un porcentaje de 0 a 100.", msg_prefix=malo)
+        self.empresa.refresh_from_db()
+        self.assertIsNone(self.empresa.max_mora_discount)
+
+    def test_cambiarlo_le_avisa_a_databridge_y_dejarlo_igual_no(self):
+        with mock.patch("crm.portal_views.sincronizar_mandato", return_value=True) as avisar:
+            r = self.client.post(reverse("portal:datos"), {"max_mora_discount": "100"}, follow=True)
+            self.assertContains(r, "DataBridge ya lo sabe")
+            self.client.post(reverse("portal:datos"), {"max_mora_discount": "100"})
+        avisar.assert_called_once()
+
+    def test_si_databridge_no_responde_igual_se_guarda_y_se_avisa(self):
+        with mock.patch("crm.portal_views.sincronizar_mandato", return_value="Sin respuesta de DataBridge"):
+            r = self.client.post(reverse("portal:datos"), {"max_mora_discount": "30"}, follow=True)
+        self.empresa.refresh_from_db()
+        self.assertEqual(self.empresa.max_mora_discount, Decimal("30"))
+        self.assertContains(r, "DataBridge no respondió")
+
+    def test_el_personal_lo_ve_en_la_ficha_pero_no_lo_cambia(self):
+        self.empresa.max_mora_discount = Decimal("50")
+        self.empresa.save()
+        self.client.logout()
+        personal(self.client)
+
+        r = self.client.get(reverse("panel:cliente_detalle", args=[self.empresa.pk]))
+
+        self.assertContains(r, "50% de la mora")
+        self.assertContains(r, "Lo fija la empresa en su portal")
+        self.assertNotIn("max_mora_discount", CreditorForm().fields)

@@ -156,6 +156,7 @@ CREATE TABLE crm_creditor (
     region        VARCHAR(80)       NULL,
     website       VARCHAR(200)      NULL,
     internal_notes         TEXT              NULL,
+    max_mora_discount      DECIMAL(5,2)      NULL,
     created_at    DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at    DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
                                          ON UPDATE CURRENT_TIMESTAMP(6),
@@ -165,6 +166,12 @@ CREATE TABLE crm_creditor (
 
     CONSTRAINT ck_creditor_tax_id CHECK (
         tax_id REGEXP '^[0-9]{7,8}-[0-9K]$'
+    ),
+
+    --  El % de los intereses de mora que la empresa autoriza condonar a quien
+    --  paga toda su deuda (contrato de integracion, §7.1). Vacio es 0.
+    CONSTRAINT ck_creditor_mora_discount CHECK (
+        max_mora_discount IS NULL OR (max_mora_discount >= 0 AND max_mora_discount <= 100)
     ),
 
     INDEX ix_creditor_status   (status),

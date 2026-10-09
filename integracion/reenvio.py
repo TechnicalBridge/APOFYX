@@ -248,6 +248,47 @@ def canales_para_databridge(canales):
     return traducidos
 
 
+def datos_del_mandato(acreedor, desde):
+    """El mandato del contrato 2: que APOFYX cobra por cuenta de esta empresa, y desde cuando."""
+    return {
+        "acreedor_rut": acreedor.tax_id,
+        #  Si la plataforma no conoce a la empresa, la registra con estos: el que
+        #  ve el deudor es el nombre de fantasia.
+        "razon_social": acreedor.legal_name,
+        "nombre_fantasia": acreedor.trade_name,
+        "vigente_desde": desde.isoformat(),
+        "mora_maxima_dias": settings.DATABRIDGE["MORA_MAXIMA_DIAS"],
+        #  Lo que la empresa autoriza condonar de la mora (contrato §7.1). Sin
+        #  el, DataBridge entiende 0: ninguna campana ofrece descuento.
+        **({"descuento_maximo_mora": float(acreedor.max_mora_discount)}
+           if acreedor.max_mora_discount is not None else {}),
+    }
+
+
+def sincronizar_mandato(acreedor, cliente=None):
+    """
+    La empresa cambio cuanto autoriza condonar: DataBridge se entera ahora, y
+    sus campanas quedan recortadas a ese maximo desde ya.
+
+    Solo si DataBridge ya tiene el mandato, que es cuando se le entrego una
+    cartera de la empresa. Va con la misma fecha que el ultimo mandato, para
+    que DataBridge cambie ese y no registre otro. Devuelve None si no habia
+    que avisar, True si ya lo sabe, o el error si no respondio; la proxima
+    cartera lo vuelve a mandar igual.
+    """
+    ultimo = (Forward.objects.filter(batch__creditor=acreedor, status=Forward.Status.SENT)
+              .select_related("batch").order_by("-batch__cut_off", "-pk").first())
+    if ultimo is None:
+        return None
+    cliente = cliente or ClienteDataBridge()
+    try:
+        cliente.enviar("/api/v1/mandatos", datos_del_mandato(acreedor, acreedor.client_since or ultimo.batch.cut_off))
+    except ErrorDataBridge as error:
+        log.warning("No se pudo avisar a DataBridge el descuento maximo de %s: %s", acreedor.pk, error)
+        return str(error)
+    return True
+
+
 def asegurar_mandato_y_campana(cliente, batch, campana):
     """
     Contrato 2: antes de pasar una cartera, DataBridge tiene que saber que
@@ -256,15 +297,7 @@ def asegurar_mandato_y_campana(cliente, batch, campana):
     Las dos llamadas son idempotentes del lado de DataBridge, asi que se
     pueden repetir en cada reenvio sin llevar la cuenta de si ya se hicieron.
     """
-    cliente.enviar("/api/v1/mandatos", {
-        "acreedor_rut": batch.creditor.tax_id,
-        #  Si la plataforma no conoce a la empresa, la registra con estos: el que
-        #  ve el deudor es el nombre de fantasia.
-        "razon_social": batch.creditor.legal_name,
-        "nombre_fantasia": batch.creditor.trade_name,
-        "vigente_desde": (batch.creditor.client_since or batch.cut_off).isoformat(),
-        "mora_maxima_dias": settings.DATABRIDGE["MORA_MAXIMA_DIAS"],
-    })
+    cliente.enviar("/api/v1/mandatos", datos_del_mandato(batch.creditor, batch.creditor.client_since or batch.cut_off))
     cliente.enviar("/api/v1/campanas", {
         "id_externo": id_de_campana(campana),
         "acreedor_rut": batch.creditor.tax_id,
