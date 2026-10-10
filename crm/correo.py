@@ -16,10 +16,16 @@ y sin `localhost`: una direccion asi no le llega a un deudor.
 
 import re
 
-#  Lo que puede ir antes de la arroba (RFC 5322, sin comillas), con puntos al medio y no seguidos.
-LOCAL = re.compile(r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*")
-#  Etiquetas de letras, numeros y guiones, y una terminacion de letras (o xn-- en un dominio con tildes).
-DOMINIO = re.compile(r"([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})")
+#  Se revisa parte por parte, entre puntos, y no con una sola expresion para
+#  toda la direccion: asi el tiempo crece en linea recta con el largo, aunque
+#  alguien mande "0.0.0.0..." a proposito.
+
+#  Cada parte de lo que va antes de la arroba (RFC 5322, sin comillas).
+ATOMO = re.compile(r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+")
+#  Cada etiqueta del dominio: letras, numeros y guiones, de 1 a 63.
+ETIQUETA = re.compile(r"[a-z0-9-]{1,63}")
+#  La terminacion: letras, o xn-- en un dominio con tildes.
+TERMINACION = re.compile(r"[a-z]{2,63}|xn--[a-z0-9-]{1,59}")
 
 
 def normalizar(crudo):
@@ -36,6 +42,12 @@ def normalizar(crudo):
     dominio = dominio.lower()
     if len(local) > 64 or len(dominio) > 253:
         return None
-    if not LOCAL.fullmatch(local) or not DOMINIO.fullmatch(dominio):
+    #  Puntos al medio y no seguidos: ninguna parte puede quedar vacia.
+    if not all(ATOMO.fullmatch(parte) for parte in local.split(".")):
+        return None
+    *etiquetas, terminacion = dominio.split(".")
+    if not etiquetas or not TERMINACION.fullmatch(terminacion):
+        return None
+    if not all(ETIQUETA.fullmatch(e) and not e.startswith("-") and not e.endswith("-") for e in etiquetas):
         return None
     return f"{local}@{dominio}"
