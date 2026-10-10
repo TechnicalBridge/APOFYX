@@ -15,6 +15,11 @@ DOS PRINCIPIOS QUE EXPLICAN CASI TODO EL ARCHIVO
    respuesta sin volver a procesar nada. El mismo id con otro contenido se
    rechaza: un numero de lote no se reutiliza.
 
+UN CORREO MAL ESCRITO NO RECHAZA LA DEUDA. Entra sin correo, y su resultado
+trae el aviso `correo_invalido` (contrato §6.4): se le puede cobrar por telefono,
+y la empresa corrige el correo en la cartera siguiente. La regla es la misma de
+DataBridge (crm/correo.py).
+
 Y dos reglas del mes siguiente, cuando el acreedor vuelve a mandar una deuda
 que APOFYX ya tiene: una pagada vuelve a cobranza solo con cargos posteriores a
 los que se pagaron, y una que paso la mora del mandato se devuelve.
@@ -34,6 +39,7 @@ from django.conf import settings
 from django.db import transaction
 
 from cartera.models import Batch, Debt, DebtCharge, Debtor
+from crm.correo import normalizar as correo_valido
 from crm.rut import es_valido, normalizar
 
 MOTIVOS_DE_RETIRO = {"pago_directo", "acuerdo_directo", "error", "disputa_resuelta", "fuera_de_mandato", "otro"}
@@ -89,9 +95,10 @@ def _monto(valor, moneda):
     return monto
 
 
-def _validar_deuda(deuda, corte, vistos):
+def _validar_deuda(deuda, corte, vistos, avisos):
     """
-    Revisa una deuda y devuelve (errores, datos_utiles).
+    Revisa una deuda y devuelve (errores, datos_utiles). Lo que no la rechaza
+    pero conviene que la empresa sepa (un correo mal escrito) va en `avisos`.
 
     Devolver los datos ya convertidos evita volver a parsear fechas y montos
     mas abajo, que es donde se cuelan las diferencias entre lo validado y lo
@@ -127,9 +134,17 @@ def _validar_deuda(deuda, corte, vistos):
     if not es_valido(rut):
         errores.append(_error("deudor.rut", "rut_invalido",
                               "El RUT no cumple el formato o el digito verificador no corresponde"))
-    if not (deudor.get("correo") or deudor.get("telefono")):
+    #  Un correo mal escrito no rechaza la deuda: entra sin correo, y la
+    #  respuesta lo avisa. Solo si tampoco trae telefono se queda sin canal.
+    crudo = deudor.get("correo")
+    correo = correo_valido(crudo)
+    if crudo is not None and str(crudo).strip() and correo is None:
+        avisos.append(_error("deudor.correo", "correo_invalido",
+                             "El correo no es una direccion valida: la deuda entra sin correo"))
+    if not (correo or deudor.get("telefono")):
         errores.append(_error("deudor", "sin_canal_contacto",
-                              "El deudor no trae ni correo ni telefono"))
+                              "El deudor no trae un correo valido ni telefono" if avisos
+                              else "El deudor no trae ni correo ni telefono"))
     if deudor.get("tipo") not in ("persona", "empresa"):
         errores.append(_error("deudor.tipo", "tipo_invalido", "El tipo va como persona o empresa"))
     if not deudor.get("nombre"):
@@ -191,6 +206,7 @@ def _validar_deuda(deuda, corte, vistos):
         "accion": "registrar", "rut": rut, "deudor": deudor, "moneda": moneda,
         "concepto": deuda["concepto"], "referencias": deuda.get("referencias") or {},
         "cargos": cargos, "mora": mora, "tasa": tasa,
+        "correo": correo, "correo_invalido": bool(avisos),
     }
 
 
@@ -286,7 +302,8 @@ def recibir_cartera(creditor, payload, source=Batch.Source.API, reenviar=True):
                                "errores": [_error("", "deuda_invalida", "La deuda no es un objeto")]})
             continue
 
-        errores, datos = _validar_deuda(deuda, corte, vistos)
+        avisos = []
+        errores, datos = _validar_deuda(deuda, corte, vistos, avisos)
         id_deuda = deuda.get("id_externo")
         if id_deuda:
             vistos.add(id_deuda)
@@ -294,7 +311,8 @@ def recibir_cartera(creditor, payload, source=Batch.Source.API, reenviar=True):
             fuera = next((e for e in errores if e["codigo"] == "mora_fuera_de_mandato"), None)
             if fuera and _devolver(creditor, batch, id_deuda):
                 fuera["mensaje"] += ". APOFYX la saca de su cartera y deja de cobrarla"
-            resultados.append({"id_externo": id_deuda, "resultado": "rechazada", "errores": errores})
+            resultados.append(_con_avisos(
+                {"id_externo": id_deuda, "resultado": "rechazada", "errores": errores}, avisos))
             continue
 
         existente = Debt.objects.filter(creditor=creditor, external_id=id_deuda).first()
@@ -338,10 +356,10 @@ def recibir_cartera(creditor, payload, source=Batch.Source.API, reenviar=True):
 
         resultado = _guardar_deuda(creditor, batch, id_deuda, datos, existente)
         aceptadas += 1
-        resultados.append({
+        resultados.append(_con_avisos({
             "id_externo": id_deuda, "resultado": resultado,
             "mora_dias": datos["mora"], "tramo": Debt.tramo(datos["mora"]),
-        })
+        }, avisos))
 
     batch.accepted_count = aceptadas
     batch.rejected_count = len(deudas) - aceptadas
@@ -368,6 +386,11 @@ def recibir_cartera(creditor, payload, source=Batch.Source.API, reenviar=True):
 
 
 SE_CONSERVAN = (Debt.Status.OPEN, Debt.Status.REPACTED, Debt.Status.DISPUTED)
+
+
+def _con_avisos(resultado, avisos):
+    """El resultado de una deuda, con sus avisos si los hay (contrato §6.4)."""
+    return {**resultado, "avisos": avisos} if avisos else resultado
 
 
 def _solo_cargos_nuevos(deuda, cargos):
@@ -401,15 +424,15 @@ def _cerrar(deuda, motivo, batch):
 def _guardar_deuda(creditor, batch, id_deuda, datos, existente):
     """Crea o actualiza la deuda y reemplaza sus cargos."""
     deudor_datos = datos["deudor"]
-    deudor, _ = Debtor.objects.update_or_create(
-        tax_id=datos["rut"],
-        defaults={
-            "kind": Debtor.Kind.PERSON if deudor_datos["tipo"] == "persona" else Debtor.Kind.COMPANY,
-            "full_name": deudor_datos["nombre"],
-            "email": deudor_datos.get("correo") or None,
-            "phone": deudor_datos.get("telefono") or None,
-        },
-    )
+    campos = {
+        "kind": Debtor.Kind.PERSON if deudor_datos["tipo"] == "persona" else Debtor.Kind.COMPANY,
+        "full_name": deudor_datos["nombre"],
+        "phone": deudor_datos.get("telefono") or None,
+    }
+    #  Un correo malo no borra el bueno que ya tenia: con el se le sigue escribiendo.
+    if not datos["correo_invalido"]:
+        campos["email"] = datos["correo"]
+    deudor, _ = Debtor.objects.update_or_create(tax_id=datos["rut"], defaults=campos)
 
     nuevos = [
         (c["concepto"], c["periodo"], c["monto"], c["vence"])

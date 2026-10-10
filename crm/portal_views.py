@@ -150,8 +150,11 @@ def subir(request):
             respuesta = recibir_cartera(empresa, cartera, source=Batch.Source.FILE)
         except CarteraInvalida as fallo:
             form.add_error("archivo" if fallo.codigo == "csv_invalido" else None, fallo.mensaje)
+    con_avisos = sum(1 for fila in (respuesta or {}).get("resultados", [])
+                     if fila.get("avisos") and fila.get("resultado") != "rechazada")
     return render(request, "portal/subir.html", {
         "activo": "subir", "empresa": empresa, "form": form, "respuesta": respuesta,
+        "con_avisos": con_avisos,
     })
 
 

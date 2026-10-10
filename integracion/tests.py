@@ -1916,3 +1916,147 @@ class ElMaximoDeDescuentoViajaEnElMandato(TestCase):
         Forward.objects.update(status=Forward.Status.SENT)
 
         self.assertIn("Sin respuesta", sincronizar_mandato(self.acreedor, ClienteFalso(caido=True)))
+
+
+# ==========================================================================
+#  El correo del deudor (#66): la misma regla que DataBridge
+# ==========================================================================
+
+from django.core.files.uploadedfile import SimpleUploadedFile  # noqa: E402
+from django.test import SimpleTestCase  # noqa: E402
+
+from crm.correo import normalizar as correo_valido  # noqa: E402
+from crm.tests import empresa_con_acceso  # noqa: E402
+
+
+class LaReglaDelCorreoEsLaDeDataBridge(SimpleTestCase):
+    """Los mismos casos que CorreoTest de ms-debt: los dos sistemas aceptan y rechazan lo mismo."""
+
+    def test_acepta_cualquier_direccion_valida(self):
+        for bueno in ("juan.perez+arriendo@gmail.com", "ana@sub.dominio.cl", "x@empresa.app",
+                      "maria_o'neil@correo.com", "contacto@xn--patrimonio-ninos-9qb.cl"):
+            self.assertEqual(correo_valido(bueno), bueno, bueno)
+
+    def test_rechaza_lo_que_no_puede_recibir_correo(self):
+        for malo in ("juan@gmail", "juan perez@gmail.com", "@gmail.com", "juan@", "juan",
+                     "juan@@gmail.com", "juan..perez@gmail.com", ".juan@gmail.com", "juan@-gmail.com",
+                     "juan@gmail.c", "juan@gmail.com.", "a" * 65 + "@gmail.com"):
+            self.assertIsNone(correo_valido(malo), malo)
+
+    def test_se_guarda_sin_espacios_alrededor_y_con_el_dominio_en_minusculas(self):
+        self.assertEqual(correo_valido("  Juan.Perez@GMAIL.Com "), "Juan.Perez@gmail.com")
+
+    def test_vacio_o_nulo_no_es_un_correo(self):
+        self.assertIsNone(correo_valido(None))
+        self.assertIsNone(correo_valido("   "))
+
+
+@override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+class UnCorreoMalEscritoNoRechazaLaDeuda(TestCase):
+    """La deuda entra sin correo y con el aviso correo_invalido: se le cobra por telefono."""
+
+    RUT_FELIPE = "16482337-7"
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        self.lotes = 0
+
+    def entregar(self, cambios):
+        """Una entrega con la deuda de Felipe (que trae telefono), cambiada como se pida."""
+        self.lotes += 1
+        payload = cartera_de_ejemplo()
+        payload["lote"]["id_externo"] = f"PAT-CORREO-{self.lotes}"
+        payload["deudas"] = [copy.deepcopy(payload["deudas"][0])]
+        cambios(payload["deudas"][0]["deudor"])
+        return recibir_cartera(self.acreedor, payload)["resultados"][0]
+
+    def correo_guardado(self):
+        return Debtor.objects.get(tax_id=self.RUT_FELIPE).email
+
+    def test_los_correos_malos_del_criterio_entran_sin_correo_y_con_el_aviso(self):
+        for malo in ("juan@gmail", "juan perez@gmail.com", "@gmail.com"):
+            with self.subTest(malo):
+                r = self.entregar(lambda d: d.update(correo=malo))
+
+                self.assertNotEqual(r["resultado"], "rechazada")
+                self.assertEqual([(a["campo"], a["codigo"]) for a in r["avisos"]],
+                                 [("deudor.correo", "correo_invalido")])
+                self.assertIsNone(self.correo_guardado())
+
+    def test_sin_telefono_se_rechaza_y_dice_por_que(self):
+        def malo_y_sin_telefono(deudor):
+            deudor["correo"] = "@gmail.com"
+            deudor.pop("telefono")
+
+        r = self.entregar(malo_y_sin_telefono)
+
+        self.assertEqual(r["resultado"], "rechazada")
+        self.assertIn({"campo": "deudor", "codigo": "sin_canal_contacto",
+                       "mensaje": "El deudor no trae un correo valido ni telefono"}, r["errores"])
+        self.assertEqual([a["codigo"] for a in r["avisos"]], ["correo_invalido"])
+
+    def test_los_buenos_del_criterio_se_guardan_tal_cual_y_sin_aviso(self):
+        for bueno in ("juan.perez+arriendo@gmail.com", "ana@sub.dominio.cl", "x@empresa.app"):
+            with self.subTest(bueno):
+                r = self.entregar(lambda d: d.update(correo=bueno))
+
+                self.assertNotIn("avisos", r)
+                self.assertEqual(self.correo_guardado(), bueno)
+
+    def test_se_guarda_sin_espacios_y_con_el_dominio_en_minusculas(self):
+        self.entregar(lambda d: d.update(correo="  Juan.Perez@GMAIL.Com "))
+        self.assertEqual(self.correo_guardado(), "Juan.Perez@gmail.com")
+
+    def test_un_correo_malo_no_borra_el_bueno_que_ya_tenia(self):
+        self.entregar(lambda d: d.update(correo="felipe.rojas@correo.cl"))
+        r = self.entregar(lambda d: d.update(correo="felipe.rojas@correo"))
+
+        self.assertEqual([a["codigo"] for a in r["avisos"]], ["correo_invalido"])
+        self.assertEqual(self.correo_guardado(), "felipe.rojas@correo.cl")
+
+    def test_a_databridge_no_le_llega_el_correo_malo(self):
+        campana = campana_de(self.acreedor)
+        self.entregar(lambda d: d.update(correo="juan@gmail"))
+
+        forward = Forward.objects.get(batch__external_id="PAT-CORREO-1")
+        deudor = construir_cartera(forward, campana)["deudas"][0]["deudor"]
+
+        self.assertNotIn("correo", deudor)
+        self.assertEqual(deudor["telefono"], "+56987654321")
+
+    def test_la_ficha_marca_al_deudor_sin_correo_valido(self):
+        User.objects.create_user("operador", password="clave-larga-123", is_staff=True)
+        self.client.login(username="operador", password="clave-larga-123")
+        payload = cartera_de_ejemplo()
+        payload["deudas"][0]["deudor"]["correo"] = "juan@gmail"
+        recibir_cartera(self.acreedor, payload)
+
+        r = self.client.get(reverse("panel:cliente_detalle", args=[self.acreedor.pk]))
+
+        #  Solo Felipe: los demas traen un correo valido.
+        self.assertContains(r, "Sin correo válido", count=1)
+
+
+@override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+class LaPlanillaMuestraElAviso(TestCase):
+    """La empresa que sube su cartera en la planilla ve que deuda entro con un aviso, y por que."""
+
+    def test_entra_con_el_aviso_y_la_otra_sin_nada(self):
+        empresa, _ = empresa_con_acceso(self.client)
+        encabezado = ";".join(planilla.COLUMNAS)
+        filas = [
+            encabezado,
+            "AND-1;registrar;;16482337-7;persona;Felipe;juan@gmail;+56987654321;CLP;Arancel;;Agosto;;350000;2026-08-05",
+            "AND-2;registrar;;18905214-6;persona;Ana;ana@sub.dominio.cl;;CLP;Arancel;;Agosto;;350000;2026-08-05",
+        ]
+        archivo = SimpleUploadedFile("cartera.csv", ("\r\n".join(filas) + "\r\n").encode("utf-8"),
+                                     content_type="text/csv")
+
+        r = self.client.post(reverse("portal:subir"), {"archivo": archivo, "fecha_corte": "2026-09-18",
+                                                       "lote_id_externo": "CSV-CORREO-1"})
+
+        self.assertContains(r, "2 de 2 aceptadas")
+        self.assertContains(r, "1 entró con un aviso")
+        self.assertContains(r, "El correo no es una direccion valida: la deuda entra sin correo", count=1)
+        self.assertEqual(Debtor.objects.get(tax_id="18905214-6").email, "ana@sub.dominio.cl")
+        self.assertEqual(Debt.objects.filter(creditor=empresa).count(), 2)
