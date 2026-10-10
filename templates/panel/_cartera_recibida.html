@@ -61,6 +61,10 @@
                 <td>
                     {{ fila.deuda.debtor.full_name }}
                     <span class="ap-micro d-block">{{ fila.deuda.debtor.tax_id }}</span>
+                    {% if not fila.deuda.debtor.email %}
+                    <span class="ap-estado ap-estado--aviso mt-1"
+                          title="No le llegan el código ni los correos de la campaña: se le cobra por teléfono. Corrige el correo en la próxima cartera.">Sin correo válido</span>
+                    {% endif %}
                 </td>
                 <td><span class="ap-estado ap-estado--{{ fila.deuda.status }}">{{ fila.estado }}</span></td>
                 <td class="ap-num">

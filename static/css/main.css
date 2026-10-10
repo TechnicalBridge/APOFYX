@@ -591,6 +591,8 @@ a { text-decoration: none; }
 .ap-estado--paid { color: #7fd6a9; border-color: rgba(127, 214, 169, .35); }
 .ap-estado--withdrawn { opacity: .6; }
 .ap-estado--disputed { color: #e08a7a; border-color: rgba(224, 138, 122, .35); }
+/* Algo que no rechaza la deuda pero hay que corregir: un correo que no sirve. */
+.ap-estado--aviso { color: #e8b56a; border-color: rgba(232, 181, 106, .4); }
 
 .ap-marca-principal {
     font-family: var(--ap-mono); font-size: .62rem; letter-spacing: .08em;

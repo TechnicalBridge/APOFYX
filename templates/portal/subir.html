@@ -39,6 +39,7 @@
 <h2 class="ap-h3 mt-5 mb-3">
     Lote {{ respuesta.lote }}: {{ respuesta.aceptadas }} de {{ respuesta.recibidas }} aceptadas
     {% if respuesta.repetido %}<span class="ap-micro">· ya lo habíamos recibido</span>{% endif %}
+    {% if con_avisos %}<span class="ap-micro">· {{ con_avisos }} {% if con_avisos == 1 %}entró{% else %}entraron{% endif %} con un aviso</span>{% endif %}
 </h2>
 <table class="ap-tabla">
     <thead><tr><th>Cliente</th><th>Resultado</th><th>Detalle</th></tr></thead>
@@ -53,6 +54,7 @@
                 {% elif fila.mora_dias is not None %}
                 {{ fila.mora_dias }} días de mora
                 {% endif %}
+                {% for aviso in fila.avisos %}<span class="d-block"><span class="ap-estado ap-estado--aviso">Aviso</span> {{ aviso.mensaje }}</span>{% endfor %}
             </td>
         </tr>
         {% endfor %}
