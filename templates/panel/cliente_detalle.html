@@ -154,6 +154,30 @@
                 </form>
             </div>
 
+            <div class="ap-micro mb-2">
+                Descuento por pronto pago:
+                {% for valor, etiqueta in fila.descuento %}{{ valor|floatformat:"-2" }}%{% if not forloop.last %} · {% endif %}{% endfor %}
+                <span class="d-block">({% for valor, etiqueta in fila.descuento %}{{ etiqueta }}{% if not forloop.last %}, {% endif %}{% endfor %})</span>
+            </div>
+            {% if fila.campana.status != "finished" %}
+            <details class="mb-3">
+                <summary class="ap-micro">Cambiar el descuento</summary>
+                <form method="post" action="{% url 'panel:campana_descuento' empresa.pk fila.campana.pk %}" class="row g-2 mt-1" novalidate>
+                    {% csrf_token %}
+                    {% for campo in fila.form_descuento %}
+                    <div class="col-4">
+                        <label class="form-label ap-micro" for="{{ campo.id_for_label }}">{{ campo.label }} (%)</label>
+                        {{ campo }}
+                    </div>
+                    {% endfor %}
+                    <div class="col-12">
+                        <span class="ap-micro d-block mb-2">{{ fila.form_descuento.explicacion_descuento }}</span>
+                        <button class="btn btn-ap-linea btn-sm" type="submit">Guardar descuento</button>
+                    </div>
+                </form>
+            </details>
+            {% endif %}
+
             {% if fila.embudo %}
             <div class="ap-embudo">
                 <div><span class="ap-embudo__rotulo">Enviados</span><span class="ap-embudo__valor">{{ fila.embudo.enviados }}</span></div>

@@ -37,6 +37,8 @@ urlpatterns = [
     path("clientes/<int:pk>/campanas/nueva/", panel_views.campana_nueva, name="campana_nueva"),
     path("clientes/<int:pk>/campanas/<int:campana_pk>/estado/",
          panel_views.campana_estado, name="campana_estado"),
+    path("clientes/<int:pk>/campanas/<int:campana_pk>/descuento/",
+         panel_views.campana_descuento, name="campana_descuento"),
     path("clientes/<int:pk>/entregas/asignar/", panel_views.entregas_asignar, name="entregas_asignar"),
 
     path("plataforma/", panel_views.plataforma, name="plataforma"),

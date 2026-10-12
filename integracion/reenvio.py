@@ -298,9 +298,18 @@ def asegurar_mandato_y_campana(cliente, batch, campana):
     pueden repetir en cada reenvio sin llevar la cuenta de si ya se hicieron.
     """
     cliente.enviar("/api/v1/mandatos", datos_del_mandato(batch.creditor, batch.creditor.client_since or batch.cut_off))
-    cliente.enviar("/api/v1/campanas", {
+    cliente.enviar("/api/v1/campanas", datos_de_la_campana(campana))
+
+
+def datos_de_la_campana(campana):
+    """
+    La campana del contrato 2. El descuento por tramo va solo si la campana lo
+    tiene: sin el, DataBridge no cambia el que ya tenia. Los tramos en 0 no
+    viajan (un tramo que no viene es 0), y todos en 0 lo quitan.
+    """
+    datos = {
         "id_externo": id_de_campana(campana),
-        "acreedor_rut": batch.creditor.tax_id,
+        "acreedor_rut": campana.creditor.tax_id,
         "nombre": campana.name,
         "inicio": campana.starts_on.isoformat(),
         **({"fin": campana.ends_on.isoformat()} if campana.ends_on else {}),
@@ -308,7 +317,11 @@ def asegurar_mandato_y_campana(cliente, batch, campana):
         "intentos": campana.contact_attempts,
         **({"cadencia_dias": campana.cadence_days} if campana.cadence_days else {}),
         "estado": estado_para_databridge(campana.status),
-    })
+    }
+    if campana.mora_discount is not None:
+        datos["descuento_mora_por_tramo"] = {tramo: valor for tramo, valor in campana.mora_discount.items()
+                                             if valor}
+    return datos
 
 
 #  DataBridge solo ejecuta una campana en curso. Una en borrador todavia no
@@ -339,17 +352,7 @@ def sincronizar_campana(campana, cliente=None):
         return None
     cliente = cliente or ClienteDataBridge()
     try:
-        cliente.enviar("/api/v1/campanas", {
-            "id_externo": id_de_campana(campana),
-            "acreedor_rut": campana.creditor.tax_id,
-            "nombre": campana.name,
-            "inicio": campana.starts_on.isoformat(),
-            **({"fin": campana.ends_on.isoformat()} if campana.ends_on else {}),
-            "canales": canales_para_databridge(campana.channels),
-            "intentos": campana.contact_attempts,
-            **({"cadencia_dias": campana.cadence_days} if campana.cadence_days else {}),
-            "estado": estado_para_databridge(campana.status),
-        })
+        cliente.enviar("/api/v1/campanas", datos_de_la_campana(campana))
     except ErrorDataBridge as error:
         log.warning("No se pudo avisar a DataBridge del estado de la campana %s: %s", campana.pk, error)
         return str(error)

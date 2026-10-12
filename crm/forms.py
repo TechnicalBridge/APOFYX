@@ -1,6 +1,7 @@
 """Formularios del sitio publico, del panel y del portal de empresas."""
 
 import re
+from decimal import Decimal
 
 from django import forms
 from django.contrib.auth import get_user_model
@@ -8,7 +9,7 @@ from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
 
-from .models import Campaign, Creditor, CreditorContact, Lead
+from .models import DESCUENTO_FUERA_DE_RANGO, Campaign, Creditor, CreditorContact, Lead
 from .rut import es_valido, normalizar, tiene_formato
 
 
@@ -234,7 +235,76 @@ class EntrarEmpresaForm(AuthenticationForm):
             raise forms.ValidationError(self.error_messages["en_revision"], code="en_revision")
 
 
-class CampanaForm(forms.ModelForm):
+#  Los tramos del contrato (§7.1), por los dias de mora del cargo impago mas antiguo.
+TRAMOS_DESCUENTO = [("1-30", "1 a 30 días"), ("31-90", "31 a 90 días"), ("91-120", "91 a 120 días")]
+DESCUENTO_SUGERIDO = {"1-30": 0, "31-90": 50, "91-120": 100}
+
+
+def campo_de_tramo(tramo):
+    """'31-90' -> 'descuento_31_90': el nombre del campo de ese tramo."""
+    return "descuento_" + tramo.replace("-", "_")
+
+
+class DescuentoPorTramo:
+    """
+    Los tres campos del descuento por tramo de una campana, recortados al
+    maximo que autoriza la empresa. Si la empresa no autoriza nada, quedan en
+    0 y no se pueden cambiar: el descuento sale de su plata.
+    """
+
+    def _agregar_descuento(self, empresa, actual):
+        self.maximo = empresa.max_mora_discount or Decimal(0)
+        for tramo, etiqueta in TRAMOS_DESCUENTO:
+            nombre = campo_de_tramo(tramo)
+            campo = forms.DecimalField(
+                label=etiqueta, required=False, min_value=0, max_value=100, max_digits=5, decimal_places=2,
+                error_messages={"min_value": DESCUENTO_FUERA_DE_RANGO, "max_value": DESCUENTO_FUERA_DE_RANGO},
+                widget=forms.NumberInput(attrs={"min": 0, "max": 100, "step": "0.01"}),
+            )
+            if actual is not None:
+                inicial = Decimal(str(actual.get(tramo, 0)))
+            else:
+                inicial = min(Decimal(DESCUENTO_SUGERIDO[tramo]), self.maximo)
+            if not self.maximo:
+                campo.disabled = True
+                inicial = Decimal(0)
+            self.fields[nombre] = campo
+            self.initial.setdefault(nombre, inicial)
+
+    @property
+    def explicacion_descuento(self):
+        if not self.maximo:
+            return "La empresa no autorizó descuento: los tramos quedan en 0. Lo fija ella en su portal."
+        return (f"El % de los intereses de mora que se condona a quien paga toda su deuda de una vez. "
+                f"La empresa autoriza hasta {self.maximo.normalize():f}%.")
+
+    def _revisar_descuento(self):
+        for tramo, _ in TRAMOS_DESCUENTO:
+            nombre = campo_de_tramo(tramo)
+            valor = self.cleaned_data.get(nombre) or Decimal(0)
+            if valor > self.maximo:
+                self.add_error(nombre, f"La empresa autoriza hasta {self.maximo.normalize():f}%.")
+
+    def descuento(self):
+        """Lo que se guarda en la campana: el % de cada tramo, como numero."""
+        return {tramo: float(self.cleaned_data.get(campo_de_tramo(tramo)) or 0) for tramo, _ in TRAMOS_DESCUENTO}
+
+
+class DescuentoCampanaForm(DescuentoPorTramo, forms.Form):
+    """Cambiar el descuento de una campana que ya existe, desde la ficha de la empresa."""
+
+    def __init__(self, *args, empresa, campana, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._agregar_descuento(empresa, campana.mora_discount or {})
+        _aplicar_clases(self.fields)
+
+    def clean(self):
+        datos = super().clean()
+        self._revisar_descuento()
+        return datos
+
+
+class CampanaForm(DescuentoPorTramo, forms.ModelForm):
     """
     Una campaña nueva sobre la cartera de una empresa. La empresa la fija la vista.
 
@@ -270,8 +340,11 @@ class CampanaForm(forms.ModelForm):
             "ends_on": campo_fecha(),
         }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, empresa=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.con_descuento = empresa is not None
+        if self.con_descuento:
+            self._agregar_descuento(empresa, self.instance.mora_discount if self.instance.pk else None)
         self.fields["ends_on"].required = False
         if not self.is_bound and self.instance.pk is None:
             self.initial.setdefault("starts_on", timezone.localdate())
@@ -303,6 +376,8 @@ class CampanaForm(forms.ModelForm):
 
     def save(self, commit=True):
         self.instance.cadence_days = self.cleaned_data.get("cadencia")
+        if self.con_descuento:
+            self.instance.mora_discount = self.descuento()
         return super().save(commit)
 
     def clean(self):
@@ -313,6 +388,8 @@ class CampanaForm(forms.ModelForm):
         cadencia, intentos = datos.get("cadencia"), datos.get("contact_attempts")
         if cadencia and intentos and len(cadencia) < intentos:
             self.add_error("cadencia", f"Con {intentos} intentos, la cadencia necesita {intentos} días.")
+        if self.con_descuento:
+            self._revisar_descuento()
         return datos
 
 

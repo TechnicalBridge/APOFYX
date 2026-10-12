@@ -62,7 +62,12 @@
                     {{ fila.deuda.debtor.full_name }}
                     <span class="ap-micro d-block">{{ fila.deuda.debtor.tax_id }}</span>
                 </td>
-                <td><span class="ap-estado ap-estado--{{ fila.deuda.status }}">{{ fila.estado }}</span></td>
+                <td>
+                    <span class="ap-estado ap-estado--{{ fila.deuda.status }}">{{ fila.estado }}</span>
+                    {% if fila.condonado %}
+                    <span class="ap-micro d-block">{% if fila.deuda.currency == "UF" %}{{ fila.condonado|uf }}{% else %}{{ fila.condonado|pesos }}{% endif %} de intereses condonados</span>
+                    {% endif %}
+                </td>
                 <td class="ap-num">
                     {% if fila.en_gestion %}
                     {% if fila.deuda.currency == "UF" %}{{ fila.saldo|uf }}{% else %}{{ fila.saldo|pesos }}{% endif %}

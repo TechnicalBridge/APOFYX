@@ -1916,3 +1916,53 @@ class ElMaximoDeDescuentoViajaEnElMandato(TestCase):
         Forward.objects.update(status=Forward.Status.SENT)
 
         self.assertIn("Sin respuesta", sincronizar_mandato(self.acreedor, ClienteFalso(caido=True)))
+
+
+from .reenvio import datos_de_la_campana  # noqa: E402
+
+
+@override_settings(DATABRIDGE=DATABRIDGE_PRUEBA)
+class LaCampanaLlevaSuDescuento(TestCase):
+    """El descuento por tramo viaja con la campana (contrato §7.1)."""
+
+    def setUp(self):
+        self.acreedor = crear_acreedor()
+        self.campana = campana_de(self.acreedor)
+        recibir_cartera(self.acreedor, cartera_de_ejemplo())
+
+    def test_viaja_sin_los_tramos_en_0(self):
+        self.campana.mora_discount = {"1-30": 0, "31-90": 50, "91-120": 100}
+        self.assertEqual(datos_de_la_campana(self.campana)["descuento_mora_por_tramo"], {"31-90": 50, "91-120": 100})
+
+    def test_todos_en_0_lo_quitan(self):
+        self.campana.mora_discount = {"1-30": 0, "31-90": 0, "91-120": 0}
+        self.assertEqual(datos_de_la_campana(self.campana)["descuento_mora_por_tramo"], {})
+
+    def test_una_campana_sin_descuento_no_lo_toca(self):
+        self.assertNotIn("descuento_mora_por_tramo", datos_de_la_campana(self.campana))
+
+    def test_cambiarlo_llega_a_databridge_al_instante(self):
+        Forward.objects.update(status=Forward.Status.SENT)
+        Batch.objects.update(campaign=self.campana)
+        self.campana.mora_discount = {"31-90": 30}
+        self.campana.save()
+        cliente = ClienteFalso()
+
+        self.assertIs(sincronizar_campana(self.campana, cliente), True)
+        self.assertEqual(cliente.llamadas[0][1]["descuento_mora_por_tramo"], {"31-90": 30})
+
+
+@override_settings(DATABRIDGE=CON_EVENTOS)
+class ElDescuentoLeLlegaAlCliente(TestCase):
+    """Un pago con descuento se reenvia a la empresa tal como llega, con lo condonado."""
+
+    def test_el_pago_con_descuento_sale_hacia_la_empresa_con_su_desglose(self):
+        acreedor = crear_acreedor()
+        recibir_cartera(acreedor, cartera_de_ejemplo())
+        Subscription.registrar(acreedor, "http://patrimonio.prueba/api/eventos")
+
+        recibir_evento(evento_de_databridge("pago.confirmado", **{**PAGO, "monto": 909400, "capital": 900000,
+                                                                  "interes": 9400, "descuento": 9400}))
+
+        datos = OutboundEvent.objects.get().payload["datos"]
+        self.assertEqual((datos["capital"], datos["interes"], datos["descuento"]), (900000, 9400, 9400))
