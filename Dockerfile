@@ -10,7 +10,7 @@
 #      docker compose --profile app up -d --build
 # =============================================================================
 
-FROM python:3.14-slim AS dependencias
+FROM python:3.15-slim AS dependencias
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
@@ -31,7 +31,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 # -----------------------------------------------------------------------------
 
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 #  PYTHONDONTWRITEBYTECODE: no dejar .pyc sueltos.
 #  PYTHONUNBUFFERED: que los logs salgan al instante y no cuando se llene el buffer.
